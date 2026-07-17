@@ -1,4 +1,4 @@
-const LLM_BASE_URL = process.env.LLM_API_BASE ?? "http://localhost:1234/v1";
+const LLM_BASE_URL = process.env.LLM_BASE_URL ?? "http://localhost:1234/v1";
 const LLM_API_KEY = process.env.LLM_API_KEY ?? "not-needed";
 const LLM_MODEL = process.env.LLM_MODEL ?? "local-model"; // Ollamaなどはモデル名指定が必須
 

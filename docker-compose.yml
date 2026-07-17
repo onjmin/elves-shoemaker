@@ -24,11 +24,12 @@ services:
          && rm -rf /var/lib/apt/lists/*
 
         # ===== Node.js のインストール =====
-        RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
+        # $$ は Docker Compose 自身の変数展開を回避するためのエスケープ記法。
+        RUN curl -fsSL https://nodejs.org/dist/v$${NODE_VERSION}/node-v$${NODE_VERSION}-linux-x64.tar.xz \
             | tar -xJ --strip-components=1 -C /usr/local
 
         # ===== pnpm のインストール =====
-        RUN npm install -g pnpm@${PNPM_VERSION}
+        RUN npm install -g pnpm@$${PNPM_VERSION}
 
         # ===== セキュリティ & 実行ユーザー設定 =====
         # ホスト(WSL)側の一般ユーザーとUID(1000)を合わせ、ファイル所有権の競合を回避
@@ -53,10 +54,11 @@ services:
     env_file:
       - .env
 
-    # ホスト（Windows）側で動く LM Studio / Ollama など、LAN上のアドレスへ
-    # コンテナ内部から到達するための設定。Linux の Docker Engine では
-    # host.docker.internal は自動解決されないため明示的に登録する。
-    # .env 側では http://host.docker.internal:1234/v1 のように参照する。
+    # 注意: Docker Engine は WSL2 内に直接インストールされている（Docker Desktop ではない）ため、
+    # host.docker.internal（host-gateway）が指す「ホスト」は WSL2 自身であり Windows ではない。
+    # LM Studio 等 Windows 側で動くサービスへは到達できないので、.env では LAN IP
+    # （例: 192.168.0.23）を直接指定すること。host.docker.internal はサービスが WSL2 上で
+    # 直接（Dockerの外で）動いている場合のみ有効なため、念のため残しておく。
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

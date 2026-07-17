@@ -198,19 +198,24 @@ curl http://192.168.0.23:1234
 Docker コンテナ → Windows の疎通確認は、
 **後続の Docker 起動手順完了後**に行います。
 
-> [!NOTE]
-> `docker-compose.yml` は `extra_hosts: host.docker.internal:host-gateway` を設定済みのため、
-> **Docker を動かしている Windows マシン自身**で LLM API が動いている場合に限り、
-> IP 直指定ではなく `host.docker.internal` で到達できます
-> （`.env` の `LLM_BASE_URL=http://host.docker.internal:1234/v1` を参照）。
+> [!WARNING]
+> `docker-compose.yml` には `extra_hosts: host.docker.internal:host-gateway` を設定していますが、
+> **これは今回のケースでは使えません。** 本プロジェクトの Docker Engine は Docker Desktop ではなく
+> **WSL2 の中に直接インストール**しているため（1.3節参照）、`host.docker.internal` が指す
+> 「ホスト」は **WSL2 自身**です。LM Studio が動く Windows は WSL2 から見て別マシン相当なので、
+> `host.docker.internal` からは到達できません。
 >
-> `host.docker.internal` は「Docker Engine のホストマシン」だけを指す特殊名であり、
-> LAN 上の任意のアドレスに解決されるわけではありません。
-> LLM や unj-reze が **別の LAN マシン**（例: `192.168.0.3`）で動いている場合は、
-> `host.docker.internal` は使えないため、そのマシンの IP を `.env` に直接指定してください
-> （コンテナは既定のブリッジネットワーク経由で LAN 上の他ホストへ普通に到達できます）。
+> ```
+> コンテナ → (host-gateway) → WSL2 ↛ Windows（LM Studio）
+> ```
 >
-> 上記の IP アドレスでの疎通確認は、あくまで「WSL → Windows」経路の切り分け用です。
+> したがって `.env` の `LLM_BASE_URL` には、上記 1.5.1 で確認した **Windows 側の LAN IP を
+> そのまま直接指定**してください（例: `http://192.168.0.23:1234/v1`）。
+> `unj-reze` など他サービスへの接続も同様に、それぞれが動いているマシンの LAN IP を直接指定します
+> （`LLM_BASE_URL` と `UNJ_REZE_API_BASE` が同一マシンとは限りません）。
+>
+> `host.docker.internal` が意味を持つのは、接続先サービスが **WSL2 上で Docker を使わず直接**
+> 動いている場合のみです（今回の LM Studio のような Windows ネイティブアプリには使えません）。
 
 ### 1.6 プロジェクトのクローン
 
