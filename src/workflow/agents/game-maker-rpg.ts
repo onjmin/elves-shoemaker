@@ -4,16 +4,21 @@ import { resolve } from "node:path";
 import { emitDiscordWebhook } from "../../core/discord-webhook";
 import { llm } from "../../core/llm-client";
 import { repairPrompt } from "../../game-maker/prompts";
-import { buildRpgManifest, renderRpgAsciiMap } from "../../game-maker/rpg/builder";
+import {
+	assembleRpgManifest,
+	type BuiltWorld,
+	buildRpgWorld,
+	renderRpgAsciiMap,
+} from "../../game-maker/rpg/builder";
 import { lintRpgManifest } from "../../game-maker/rpg/lint";
-import { rpgConceptPrompt, rpgLevelPrompt } from "../../game-maker/rpg/prompts";
+import { rpgConceptPrompt, rpgWorldPrompt } from "../../game-maker/rpg/prompts";
 import {
 	normalizeRpgLevel,
 	type RpgConcept,
 	RpgConceptSchema,
-	RpgLevelSchema,
-	type RpgManifest,
 	RpgManifestSchema,
+	type RpgWorldDef,
+	RpgWorldLevelSchema,
 } from "../../game-maker/rpg/schema";
 import { postGame, unjRezeBaseUrl } from "../../game-maker/submit";
 
@@ -22,9 +27,11 @@ import { postGame, unjRezeBaseUrl } from "../../game-maker/submit";
  * テーマ（環境変数 GAME_THEME）から unj-reze の rpg エンジン用の
  * 「ゆめにっき系・散策ゲーム」を生成する。戦闘なし・敵なし。
  *
- * パイプラインは action 版と同じ:
- *   コンセプト → マップ+エンティティ → 決定的ビルド → 検証 → 修正ループ
- *   → logs/ へ保存。UNJ_REZE_SUBMIT=1 のときだけ POST /api/games へ投稿
+ * パイプライン:
+ *   コンセプト（拠点＋夢世界3〜5個＋収集エフェクト）
+ *   → ワールドごとにマップ+エンティティ生成（各ワールドで検証・修正ループ）
+ *   → 扉でリンクしてマルチシーン・マニフェストを決定的にビルド
+ *   → 全体検証 → logs/ へ保存。UNJ_REZE_SUBMIT=1 のときだけ POST /api/games へ投稿
  */
 
 const MAX_CONCEPT_RETRY = 3;
@@ -52,17 +59,18 @@ async function generateConcept(theme: string): Promise<RpgConcept> {
 	throw new StageError(`コンセプト生成に失敗しました: ${lastError}`);
 }
 
-async function generateLevel(
+async function generateWorld(
 	concept: RpgConcept,
-): Promise<{ manifest: RpgManifest; warnings: string[] }> {
-	const basePrompt = rpgLevelPrompt(concept);
+	worldDef: RpgWorldDef,
+): Promise<{ world: BuiltWorld; warnings: string[] }> {
+	const basePrompt = rpgWorldPrompt(concept, worldDef);
 	let prompt = basePrompt;
 	let lastJson = "";
 	for (let i = 0; i < MAX_REPAIR; i++) {
 		const { data, error } = await llm.completeAsJson(prompt);
 		const errors: string[] = [];
 		const warnings: string[] = [];
-		let manifest: RpgManifest | null = null;
+		let world: BuiltWorld | null = null;
 
 		if (!data) {
 			errors.push(error ?? "JSONが見つかりません");
@@ -70,35 +78,23 @@ async function generateLevel(
 			lastJson = JSON.stringify(data);
 			const normalized = normalizeRpgLevel(data);
 			warnings.push(...normalized.warnings);
-			const level = RpgLevelSchema.safeParse(normalized.data);
+			const level = RpgWorldLevelSchema.safeParse(normalized.data);
 			if (!level.success) {
 				errors.push(
 					...level.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).slice(0, 10),
 				);
 			} else {
-				const built = buildRpgManifest(concept, level.data);
+				const built = buildRpgWorld(concept, worldDef, level.data);
 				errors.push(...built.errors);
 				warnings.push(...built.warnings);
-				if (built.manifest) {
-					const schema = RpgManifestSchema.safeParse(built.manifest);
-					if (!schema.success) {
-						errors.push(
-							...schema.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).slice(0, 10),
-						);
-					} else {
-						manifest = schema.data;
-						const lint = lintRpgManifest(manifest);
-						errors.push(...lint.errors);
-						warnings.push(...lint.warnings);
-					}
-				}
+				world = built.world;
 			}
 		}
 
-		if (manifest && errors.length === 0) {
-			return { manifest, warnings };
+		if (world && errors.length === 0) {
+			return { world, warnings };
 		}
-		console.log(`  ⚠ マップ検証NG (${i + 1}/${MAX_REPAIR}):`);
+		console.log(`  ⚠ ワールド '${worldDef.id}' 検証NG (${i + 1}/${MAX_REPAIR}):`);
 		for (const e of errors) console.log(`    - ${e}`);
 		// 診断用：モデルが実際に出したマップを表示する
 		const rawRows = (data as { asciiMap?: unknown } | null)?.asciiMap;
@@ -108,7 +104,7 @@ async function generateLevel(
 		}
 		prompt = repairPrompt(basePrompt, lastJson || "(JSONの抽出に失敗)", errors);
 	}
-	throw new StageError("マップの生成に失敗しました（修正リトライ上限に到達）");
+	throw new StageError(`ワールド '${worldDef.id}' の生成に失敗しました（修正リトライ上限に到達）`);
 }
 
 export async function run() {
@@ -122,17 +118,56 @@ export async function run() {
 	);
 
 	try {
-		console.log("[1/3] コンセプト生成中...");
+		console.log("[1/4] コンセプト生成中...");
 		const concept = await generateConcept(theme);
-		console.log(`  ✓ 「${concept.title}」(${concept.mood})`);
+		console.log(`  ✓ 「${concept.title}」`);
+		console.log(`    ワールド: ${concept.worlds.map((w) => `${w.name}(${w.mood})`).join(" → ")}`);
+		if (concept.effects.length > 0) {
+			console.log(
+				`    エフェクト: ${concept.effects.map((e) => `${e.emoji}${e.name}@${e.worldId}`).join(", ")}`,
+			);
+		}
 
-		console.log("[2/3] マップ生成中...");
-		const { manifest, warnings } = await generateLevel(concept);
+		console.log(`[2/4] ワールド生成中... (${concept.worlds.length}個)`);
+		const allWarnings: string[] = [];
+		const worlds: BuiltWorld[] = [];
+		for (const [i, worldDef] of concept.worlds.entries()) {
+			console.log(`  (${i + 1}/${concept.worlds.length}) 「${worldDef.name}」...`);
+			const { world, warnings } = await generateWorld(concept, worldDef);
+			worlds.push(world);
+			allWarnings.push(...warnings.map((w) => `[${worldDef.id}] ${w}`));
+			console.log(`    ✓ 歩けるマス: ${world.walkable.size} / 扉: ${world.doors.length}`);
+		}
+
+		console.log("[3/4] リンク・全体検証中...");
+		const assembled = assembleRpgManifest(concept, worlds);
+		if (!assembled.manifest) {
+			throw new StageError(`マニフェスト組み立てに失敗しました: ${assembled.errors.join("; ")}`);
+		}
+		allWarnings.push(...assembled.warnings);
+		const schema = RpgManifestSchema.safeParse(assembled.manifest);
+		if (!schema.success) {
+			throw new StageError(
+				`マニフェスト検証に失敗しました: ${schema.error.issues
+					.map((e) => `${e.path.join(".")}: ${e.message}`)
+					.slice(0, 10)
+					.join("; ")}`,
+			);
+		}
+		const manifest = schema.data;
+		const lint = lintRpgManifest(manifest);
+		allWarnings.push(...lint.warnings);
+		if (lint.errors.length > 0) {
+			throw new StageError(`全体検証に失敗しました: ${lint.errors.join("; ")}`);
+		}
 		console.log("  ✓ 検証OK");
-		for (const w of warnings) console.log(`    ⚠ ${w}`);
-		console.log(renderRpgAsciiMap(manifest.map));
+		for (const w of allWarnings) console.log(`    ⚠ ${w}`);
+		for (const sc of manifest.scenes) {
+			console.log(`  ── ${sc.id}${sc.name ? `（${sc.name}）` : ""} ──`);
+			console.log(renderRpgAsciiMap(sc.map));
+		}
 
-		console.log("[3/3] 保存・投稿...");
+		console.log("[4/4] 保存・投稿...");
 		const logDir = resolve(process.cwd(), "logs");
 		await fs.mkdir(logDir, { recursive: true });
 		const logPath = resolve(logDir, `game-rpg-${Date.now()}.json`);
@@ -152,12 +187,12 @@ export async function run() {
 			});
 			console.log(`  ✓ 投稿完了: ${unjRezeBaseUrl()} (id: ${game.id})`);
 			await emitDiscordWebhook(
-				`# ✅ Game Maker (RPG散策) 完了\n\n「${concept.title}」を投稿しました (id: ${game.id})`,
+				`# ✅ Game Maker (RPG散策) 完了\n\n「${concept.title}」（${concept.worlds.length}ワールド）を投稿しました (id: ${game.id})`,
 			);
 		} else {
 			console.log("  ✓ ドライラン（UNJ_REZE_SUBMIT=1 で実投稿）");
 			await emitDiscordWebhook(
-				`# ✅ Game Maker (RPG散策) 完了（ドライラン）\n\n「${concept.title}」を生成し ${logPath} に保存しました。`,
+				`# ✅ Game Maker (RPG散策) 完了（ドライラン）\n\n「${concept.title}」（${concept.worlds.length}ワールド）を生成し ${logPath} に保存しました。`,
 			);
 		}
 	} catch (err) {

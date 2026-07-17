@@ -1,5 +1,6 @@
 // unj-reze の rpg エンジンで作る「ウォーキングシミュレーター」（ゆめにっき系）向けカタログ。
-// 戦闘・敵・アイテムは無し。散策・不思議なNPC・同一マップ内ワープだけで構成する。
+// 戦闘・敵は無し。複数の夢世界（シーン）を扉でつなぎ、散策・不思議なNPC・
+// 会話イベント・収集アイテム（エフェクト）だけで構成する。
 // タイル画像・歩行アニメは rpgen-search の実績あるアセットID（dq.ts 出典）を使う。
 
 import { soundUrl, spriteUrl, walkRef } from "../rpgen";
@@ -118,7 +119,23 @@ export const RPG_TILES: RpgTileEntry[] = [
 		color: "#ffd700",
 		passable: true,
 		special: "goal",
-		hint: "踏むと夢から覚める（エンディング）。奥に1つ",
+		hint: "踏むと夢から覚める（エンディング）。最深部ワールドに1つだけ",
+	},
+	{
+		id: 11,
+		char: "d",
+		name: "くらい床",
+		color: "#26243a",
+		passable: true,
+		hint: "夜・洞窟の歩ける床",
+	},
+	{
+		id: 12,
+		char: "o",
+		name: "はなばたけ",
+		color: "#7a4f8a",
+		passable: true,
+		hint: "花・装飾の歩ける地面",
 	},
 ];
 
@@ -127,13 +144,15 @@ export const RPG_CHAR_TO_TILE: ReadonlyMap<string, RpgTileEntry> = new Map(
 	RPG_TILES.map((t) => [t.char, t]),
 );
 /** 右埋めに使ってよい地形文字 */
-export const RPG_SAFE_PAD = new Set([".", "M", "~", "C", "F", "s", "W", "B", "r"]);
+export const RPG_SAFE_PAD = new Set([".", "M", "~", "C", "F", "s", "W", "B", "r", "d", "o"]);
 
 // ── エンティティ ─────────────────────────────────────────────────────────
-// npc  = 話しかけると不思議な一言を返す住人
-// warp = 踏むと同一マップ内の別地点へ飛ぶ（夢の非ユークリッド感の演出）
-export type RpgEntityType = "npc" | "warp";
-export const RPG_ENTITY_TYPES: RpgEntityType[] = ["npc", "warp"];
+// npc    = 話しかけると言葉を返す住人。message（一言）か dialogue（会話イベント）を持つ
+// warp   = 踏むと同一ワールド内の別地点へ飛ぶ（夢の非ユークリッド感の演出）
+// door   = 触れると別ワールド（シーン）へ移動する扉
+// effect = 拾える収集アイテム（ゆめにっきの「エフェクト」）。NPCが反応することがある
+export type RpgEntityType = "npc" | "warp" | "door" | "effect";
+export const RPG_ENTITY_TYPES: RpgEntityType[] = ["npc", "warp", "door", "effect"];
 
 /** LLMが出しがちな別名 → 正式タイプ（小文字で引く） */
 export const RPG_ENTITY_ALIASES: Record<string, RpgEntityType> = {
@@ -145,9 +164,19 @@ export const RPG_ENTITY_ALIASES: Record<string, RpgEntityType> = {
 	portal: "warp",
 	teleport: "warp",
 	teleporter: "warp",
-	door: "warp",
 	hole: "warp",
+	exit: "door",
+	gate: "door",
+	entrance: "door",
+	stairs: "door",
+	item: "effect",
+	pickup: "effect",
+	collectible: "effect",
+	treasure: "effect",
 };
+
+export const DOOR_DEFAULT_EMOJI = "🚪";
+export const WARP_DEFAULT_EMOJI = "🌀";
 
 /** NPC絵文字 → 歩行アニメid（dq.ts の実績id。無い絵文字はそのまま絵文字表示） */
 export const NPC_SPRITE_BY_EMOJI: Record<string, string> = {
@@ -163,13 +192,33 @@ export const HERO_SPRITE_REF = walkRef("0yyTSP");
 
 // ── BGM / SFX ─────────────────────────────────────────────────────────────
 // BGM は自己完結の MML ループ。ゆめにっき風に不穏で静かなループを moods 別に用意。
-export const RPG_BGM: Record<string, string> = {
+// ワールド（シーン）ごとに mood を選ばせ、シーンBGMとして流す。
+export const RPG_MOODS = ["dream", "night", "ruins", "forest", "snow", "neon"] as const;
+export type RpgMood = (typeof RPG_MOODS)[number];
+
+export const RPG_BGM: Record<RpgMood, string> = {
 	// 夢の草原：ゆったり浮遊感
 	dream: "mml:t70o4l2ce-ge- l1f l2d-fa-f l1e-",
 	// 夜の街：単音がぽつぽつ落ちる
 	night: "mml:t60o3l4arereler l2d1",
 	// 遺跡・廃墟：低く重い
 	ruins: "mml:t55o3l2c<b-a-g l1a-",
+	// 森：うすあかるいが噛み合わない
+	forest: "mml:t66o4l2egc l1a l2fad l1g",
+	// 雪原：高く澄んで途切れがち
+	snow: "mml:t58o5l4crb-rgr l1a-",
+	// ネオン街：はやく単調な明滅
+	neon: "mml:t84o4l8crcre-rcr l4grfr l2e-",
+};
+
+/** mood ごとの日本語ヒント（コンセプトプロンプトの選択肢説明に使う） */
+export const RPG_MOOD_HINTS: Record<RpgMood, string> = {
+	dream: "浮遊感のある夢の草原",
+	night: "静まりかえった夜",
+	ruins: "低く重い遺跡・廃墟",
+	forest: "うすぐらい森",
+	snow: "澄んで冷たい雪原",
+	neon: "明滅するネオン街",
 };
 
 export const RPG_SFX: Record<string, string> = {

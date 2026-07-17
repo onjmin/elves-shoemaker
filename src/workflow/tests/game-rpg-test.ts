@@ -1,12 +1,20 @@
-// ウォーキングシミュレーター（rpg エンジン）ビルダー・検証パイプラインの LLM 不要テスト。
+// ウォーキングシミュレーター（rpg エンジン・マルチシーン版）ビルダー・検証パイプラインの
+// LLM 不要テスト。拠点＋夢世界＋扉リンク＋会話イベント＋収集エフェクトを検証する。
 
-import { buildRpgManifest, renderRpgAsciiMap } from "../../game-maker/rpg/builder";
+import {
+	assembleRpgManifest,
+	type BuiltWorld,
+	buildRpgWorld,
+	compileDialogue,
+	renderRpgAsciiMap,
+} from "../../game-maker/rpg/builder";
 import { lintRpgManifest } from "../../game-maker/rpg/lint";
 import {
 	normalizeRpgLevel,
 	type RpgConcept,
-	RpgLevelSchema,
+	RpgConceptSchema,
 	RpgManifestSchema,
+	RpgWorldLevelSchema,
 } from "../../game-maker/rpg/schema";
 
 let failed = 0;
@@ -19,75 +27,145 @@ const check = (name: string, cond: boolean, detail?: string) => {
 	}
 };
 
-const concept: RpgConcept = {
+// ── テスト用コンセプト：拠点＋森＋最深部、エフェクト1つ ─────────────────────
+const concept: RpgConcept = RpgConceptSchema.parse({
 	title: "しずかなゆめ",
 	subtitle: "テスト用の夢",
 	endingMessage: "めがさめた。まくらが ぬれていた。",
 	playerEmoji: "🚶",
-	mood: "dream",
+	worlds: [
+		{ id: "nexus", name: "とびらの間", mood: "dream", theme: "白い扉がならぶ静かな部屋" },
+		{ id: "forest", name: "しずかな森", mood: "forest", theme: "霧のなかの森" },
+		{ id: "deep", name: "ふかい場所", mood: "ruins", theme: "夢のいちばん奥" },
+	],
+	effects: [{ id: "lantern", name: "ランタン", emoji: "🏮", worldId: "forest" }],
+	endingWorldId: "deep",
+});
+
+// ── マップ生成ヘルパー：外周M・内側草原の 30×24 に文字を置く ─────────────────
+const blankGrid = (): string[][] =>
+	Array.from({ length: 24 }, (_, r) =>
+		Array.from({ length: 30 }, (_, c) => (r === 0 || r === 23 || c === 0 || c === 29 ? "M" : ".")),
+	);
+const rowsOf = (g: string[][]): string[] => g.map((r) => r.join(""));
+
+const nexusGrid = blankGrid();
+nexusGrid[5][5] = "S";
+const nexusMap = rowsOf(nexusGrid);
+
+const forestGrid = blankGrid();
+const forestMap = rowsOf(forestGrid);
+
+const deepGrid = blankGrid();
+deepGrid[20][25] = "G";
+const deepMap = rowsOf(deepGrid);
+
+const dialogue = {
+	onceLines: ["……はじめて みる かお。"],
+	lines: ["まだ いたの？"],
+	choice: {
+		prompt: "かえりみちを きく？",
+		options: [
+			{ label: "きく", lines: ["とびらは うしろに ある。"] },
+			{ label: "だまる", lines: ["……そう。"] },
+		],
+	},
+	ifEffect: { effectId: "lantern", lines: ["その あかり…… どこで ひろったの。"] },
 };
 
-// ── 正常系: 30×24 の散策マップ ──────────────────────────────────────────────
-// 外周M囲い・水辺と橋・小部屋（扉つき）・奥に G。全行30文字。
-const goodMap = [
-	"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
-	"M............................M",
-	"M..FFFF......................M",
-	"M..FFFF...~~~~~..............M",
-	"M.........~~~~~..............M",
-	"M....S....~~B~~........WWWW..M",
-	"M.........~~B~~........WsDW..M",
-	"M.........~~~~~........WssW..M",
-	"M......................WWsW..M",
-	"M............................M",
-	"M............................M",
-	"M...WWWWWW...................M",
-	"M...WssssW...................M",
-	"M...WssssD...................M",
-	"M...WWWWWW...................M",
-	"M............................M",
-	"M.................FFFF.......M",
-	"M.................FFFF.......M",
-	"M............................M",
-	"M............................M",
-	"M...........................GM",
-	"M............................M",
-	"M............................M",
-	"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
-];
-
-console.log("[1] 正常系");
-const goodLevel = RpgLevelSchema.parse({
-	asciiMap: goodMap,
+const nexusLevel = RpgWorldLevelSchema.parse({
+	asciiMap: nexusMap,
 	entities: [
+		{ type: "door", col: 10, row: 5, emoji: "🚪", toWorld: "forest" },
+		{ type: "door", col: 15, row: 5, emoji: "⛩️", toWorld: "deep" },
 		{ type: "npc", col: 8, row: 10, emoji: "👻", message: "ここは だれかの ゆめの なか" },
-		{ type: "npc", col: 20, row: 15, emoji: "🐈", message: "……にゃあ" },
+	],
+});
+const forestLevel = RpgWorldLevelSchema.parse({
+	asciiMap: forestMap,
+	entities: [
+		{ type: "door", col: 5, row: 5, toWorld: "nexus" },
+		{ type: "effect", col: 20, row: 10, effectId: "lantern", message: "つめたい ひかりだ。" },
+		{ type: "npc", col: 8, row: 8, emoji: "👧", dialogue },
 		{ type: "warp", col: 3, row: 18, toCol: 26, toRow: 2 },
 	],
 });
-const good = buildRpgManifest(concept, goodLevel);
-check("ビルドエラーなし", good.errors.length === 0, good.errors.join("; "));
-check("マニフェスト生成", good.manifest !== null);
-if (good.manifest) {
-	const schema = RpgManifestSchema.safeParse(good.manifest);
+const deepLevel = RpgWorldLevelSchema.parse({
+	asciiMap: deepMap,
+	entities: [
+		{ type: "door", col: 5, row: 5, toWorld: "nexus" },
+		{ type: "npc", col: 20, row: 15, emoji: "🐈", message: "……にゃあ" },
+	],
+});
+
+console.log("[1] 正常系: 3ワールドのビルドとリンク");
+const worlds: BuiltWorld[] = [];
+for (const [def, level] of [
+	[concept.worlds[0], nexusLevel],
+	[concept.worlds[1], forestLevel],
+	[concept.worlds[2], deepLevel],
+] as const) {
+	const built = buildRpgWorld(concept, def, level);
+	check(`'${def.id}' ビルドエラーなし`, built.errors.length === 0, built.errors.join("; "));
+	if (built.world) worlds.push(built.world);
+}
+const assembled = assembleRpgManifest(concept, worlds);
+check("マニフェスト生成", assembled.manifest !== null, assembled.errors.join("; "));
+if (assembled.manifest) {
+	const schema = RpgManifestSchema.safeParse(assembled.manifest);
 	check(
 		"Zodスキーマ通過",
 		schema.success,
 		schema.success ? undefined : schema.error.issues.map((i) => i.message).join("; "),
 	);
 	if (schema.success) {
-		const lint = lintRpgManifest(schema.data);
+		const m = schema.data;
+		const lint = lintRpgManifest(m);
 		check("リント通過（G到達可能）", lint.errors.length === 0, lint.errors.join("; "));
-		check("battleが無い（散策専用）", !("battle" in schema.data));
-		console.log(renderRpgAsciiMap(schema.data.map));
+		check("battleが無い（散策専用）", !("battle" in m));
+		check("シーンが3つ", m.scenes.length === 3);
+		check(
+			"エフェクトが items に入る",
+			(m.items ?? []).some((i) => i.id === "lantern"),
+		);
+		const forestScene = m.scenes.find((s) => s.id === "forest");
+		const doorBack = forestScene?.objects.find(
+			(o) => (o as { warpSceneId?: string }).warpSceneId === "nexus",
+		) as { warpEntryCol?: number; warpEntryRow?: number } | undefined;
+		check("森→拠点の扉オブジェクトがある", doorBack !== undefined);
+		// toCol/toRow 省略時：拠点側の「森ゆき扉 (10,5)」のそばに出る
+		const near =
+			doorBack !== undefined &&
+			Math.abs((doorBack.warpEntryCol ?? 99) - 10) <= 2 &&
+			Math.abs((doorBack.warpEntryRow ?? 99) - 5) <= 2;
+		check("扉の出現座標が相手側の扉のそば", near, JSON.stringify(doorBack));
+		const evNpc = forestScene?.objects.find((o) => (o as { emoji: string }).emoji === "👧") as
+			| { pages?: { name?: string }[] }
+			| undefined;
+		check(
+			"会話イベントNPCにページがある（反応→はじめて→ふだん）",
+			evNpc?.pages?.length === 3 &&
+				evNpc.pages[0].name === "エフェクト反応" &&
+				evNpc.pages[2].name === "ふだん",
+			JSON.stringify(evNpc?.pages?.map((p) => p.name)),
+		);
+		console.log(renderRpgAsciiMap(m.scenes[0].map));
 	}
 }
 
-// ── 異常系1: S なし ─────────────────────────────────────────────────────────
-console.log("[2] 異常系: S なし");
-const noStart = buildRpgManifest(concept, {
-	asciiMap: goodMap.map((r) => r.replace("S", ".")),
-	entities: [],
+console.log("[2] 会話DSLコンパイル");
+const pages = compileDialogue(dialogue);
+const lastCmds = pages[pages.length - 1].commands;
+check("choice が ふだんページ末尾に付く", lastCmds[lastCmds.length - 1].type === "choice");
+check(
+	"onceLines がセルフスイッチで1回きり",
+	pages[1].commands.some((c) => c.type === "setSelfSwitch"),
+);
+
+console.log("[3] 異常系: 拠点に S なし");
+const noStart = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: nexusMap.map((r) => r.replace("S", ".")),
+	entities: nexusLevel.entities,
 });
 check(
 	"S欠落を検出",
@@ -95,78 +173,135 @@ check(
 	noStart.errors.join("; "),
 );
 
-// ── 異常系2: G が壁に囲まれて到達不能 ───────────────────────────────────────
-// G(col28,row20) を W で完全に囲む。
-const isolatedRows = (base: string[]): string[] =>
-	base.map((r, i) => {
-		if (i === 19) return "M..........................WWM";
-		if (i === 20) return "M..........................WGM";
-		if (i === 21) return "M..........................WWM";
-		return r;
-	});
+console.log("[4] 異常系: 拠点の扉が足りない");
+const missingDoor = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: nexusMap,
+	entities: nexusLevel.entities.filter((e) => (e as { toWorld?: string }).toWorld !== "deep"),
+});
+check(
+	"deep への扉不足を検出",
+	missingDoor.errors.some((e) => e.includes("deep")),
+	missingDoor.errors.join("; "),
+);
 
-console.log("[3] 異常系: G が孤立（到達不能）");
-const isolated = buildRpgManifest(concept, { asciiMap: isolatedRows(goodMap), entities: [] });
-check("ビルド自体は成功", isolated.manifest !== null, isolated.errors.join("; "));
-if (isolated.manifest) {
-	const parsed = RpgManifestSchema.parse(isolated.manifest);
-	const lint = lintRpgManifest(parsed);
-	check(
-		"到達不能を検出",
-		lint.errors.some((e) => e.includes("到達")),
-		`errors: ${lint.errors.join("; ")}`,
-	);
+console.log("[5] 異常系: 帰り道の扉なし・G の重複");
+const noReturn = buildRpgWorld(concept, concept.worlds[1], {
+	asciiMap: forestMap,
+	entities: forestLevel.entities.filter((e) => e.type !== "door"),
+});
+check(
+	"拠点へ戻る扉の欠落を検出",
+	noReturn.errors.some((e) => e.includes("戻る扉")),
+	noReturn.errors.join("; "),
+);
+const goalInForest = buildRpgWorld(concept, concept.worlds[1], {
+	asciiMap: forestMap.map((r, i) => (i === 12 ? `${r.slice(0, 14)}G${r.slice(15)}` : r)),
+	entities: forestLevel.entities,
+});
+check(
+	"エンディング以外の G は警告つきで草原化",
+	goalInForest.errors.length === 0 && goalInForest.warnings.some((w) => w.includes("専用")),
+	[...goalInForest.errors, ...goalInForest.warnings].join("; "),
+);
+
+console.log("[6] 異常系: G が孤立（到達不能）");
+const isolatedDeep = deepMap.map((r, i) => {
+	if (i === 19) return `${r.slice(0, 24)}WWW${r.slice(27)}`;
+	if (i === 20) return `${r.slice(0, 24)}WGW${r.slice(27)}`;
+	if (i === 21) return `${r.slice(0, 24)}WWW${r.slice(27)}`;
+	return r;
+});
+const isolated = buildRpgWorld(concept, concept.worlds[2], {
+	asciiMap: isolatedDeep,
+	entities: deepLevel.entities,
+});
+check(
+	"到達不能を検出",
+	isolated.errors.some((e) => e.includes("到達")),
+	isolated.errors.join("; "),
+);
+
+console.log("[7] 異常系: warp の飛び先が袋小路");
+const pocketGrid = blankGrid();
+pocketGrid[5][5] = "S";
+for (const [c, r] of [
+	[24, 19],
+	[25, 19],
+	[26, 19],
+	[24, 20],
+	[26, 20],
+	[24, 21],
+	[25, 21],
+	[26, 21],
+]) {
+	pocketGrid[r][c] = "W";
 }
+const pocket = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: rowsOf(pocketGrid),
+	entities: [...nexusLevel.entities, { type: "warp", col: 8, row: 8, toCol: 25, toRow: 20 }],
+});
+check(
+	"袋小路ワープを検出",
+	pocket.errors.some((e) => e.includes("詰み")),
+	pocket.errors.join("; "),
+);
 
-// ── 自動補正: 壁の中の NPC・マップ外の warp 先 ──────────────────────────────
-console.log("[4] 自動補正: 壁の中の座標・マップ外の座標");
-const drifted = buildRpgManifest(concept, {
-	asciiMap: goodMap,
+console.log("[8] 異常系: 会話NPCが1マス幅の通路をふさぐ");
+const corridorGrid = blankGrid();
+corridorGrid[5][5] = "S";
+for (let c = 20; c <= 28; c++) {
+	corridorGrid[11][c] = "W";
+	corridorGrid[13][c] = "W";
+}
+const plugged = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: rowsOf(corridorGrid),
 	entities: [
-		{ type: "npc", col: 0, row: 0, emoji: "👤", message: "かべのなかにいる" }, // 壁 → 移動
-		{ type: "warp", col: 8, row: 10, toCol: 99, toRow: 99 }, // 先がマップ外 → クランプ+補正
+		{ type: "door", col: 10, row: 5, toWorld: "forest" },
+		{ type: "door", col: 27, row: 12, toWorld: "deep" }, // 通路の奥
+		{ type: "npc", col: 23, row: 12, emoji: "👧", dialogue }, // 通路の栓
 	],
 });
-check("補正してビルド成功", drifted.manifest !== null, drifted.errors.join("; "));
+check(
+	"通路の栓を検出",
+	plugged.errors.some((e) => e.includes("ふさいで")),
+	plugged.errors.join("; "),
+);
+
+console.log("[9] 自動補正: 壁の中の座標・マップ外の座標");
+const drifted = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: nexusMap,
+	entities: [
+		...nexusLevel.entities,
+		{ type: "npc", col: 0, row: 0, emoji: "👤", message: "かべのなかにいる" },
+		{ type: "warp", col: 12, row: 12, toCol: 99, toRow: 99 },
+	],
+});
+check("補正してビルド成功", drifted.world !== null, drifted.errors.join("; "));
 check(
 	"移動の警告が出る",
 	drifted.warnings.some((w) => w.includes("移動")),
 	drifted.warnings.join("; "),
 );
 
-// ── 正規化: 別名タイプ・未知タイプ ──────────────────────────────────────────
-console.log("[5] 正規化: 別名・未知タイプ");
+console.log("[10] 正規化: 別名・未知タイプ");
 const aliased = normalizeRpgLevel({
-	asciiMap: goodMap,
+	asciiMap: forestMap,
 	entities: [
 		{ type: "Ghost", col: 8, row: 10, message: "……" }, // 別名 → npc
-		{ type: "Portal", col: 3, row: 18, toCol: 26, toRow: 2 }, // 別名 → warp
+		{ type: "Gate", col: 5, row: 5, toWorld: "nexus" }, // 別名 → door
+		{ type: "Item", col: 20, row: 10, effectId: "lantern" }, // 別名 → effect
 		{ type: "sword", col: 5, row: 5 }, // 未知 → 破棄
 	],
 });
-const aliasedParsed = RpgLevelSchema.safeParse(aliased.data);
+const aliasedParsed = RpgWorldLevelSchema.safeParse(aliased.data);
 check("正規化後にZod通過", aliasedParsed.success);
 if (aliasedParsed.success) {
 	const types = aliasedParsed.data.entities.map((e) => e.type);
 	check(
-		"ghost→npc, portal→warp, sword破棄",
-		types.length === 2 && types[0] === "npc" && types[1] === "warp",
+		"ghost→npc, gate→door, item→effect, sword破棄",
+		types.length === 3 && types[0] === "npc" && types[1] === "door" && types[2] === "effect",
 		`got: ${types.join(",")}`,
 	);
-}
-
-// ── ワープ経由でしか行けない場所も到達扱い ──────────────────────────────────
-console.log("[6] ワープ到達性: 孤島の G へワープでつなぐ");
-const bridged = buildRpgManifest(concept, {
-	asciiMap: isolatedRows(goodMap),
-	entities: [{ type: "warp", col: 8, row: 10, toCol: 28, toRow: 20 }],
-});
-if (bridged.manifest) {
-	const parsed = RpgManifestSchema.parse(bridged.manifest);
-	const lint = lintRpgManifest(parsed);
-	check("ワープ経由でGに到達できる", lint.errors.length === 0, lint.errors.join("; "));
-} else {
-	check("ビルド成功", false, bridged.errors.join("; "));
 }
 
 if (failed > 0) {
