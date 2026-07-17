@@ -10,6 +10,7 @@
     "start2": "tsx -e \"import { run } from './src/workflow/agents/bulk-scaffolder.ts'; run()\"",
     "start3": "tsx -e \"import { run } from './src/workflow/agents/role-based-team.ts'; run()\"",
     "start4": "tsx -e \"import { run } from './src/workflow/agents/opencode-like-agent.ts'; run()\"",
+    "start5": "tsx -e \"import { run } from './src/workflow/agents/game-maker.ts'; run()\"",
     "lint": "biome check src",
     "test:file": "tsx src/workflow/tests/file-create-test.ts",
     "test:shell": "tsx src/workflow/tests/shell-exec-test.ts",
@@ -19,6 +20,8 @@
     "test:search": "tsx src/workflow/tests/web-search-test.ts",
     "test:github": "tsx src/workflow/tests/github-auth-test.ts",
     "test:discord": "tsx src/workflow/tests/discord-webhook-test.ts",
+    "test:game": "tsx src/workflow/tests/game-builder-test.ts",
+    "test:rpgen": "tsx src/workflow/tests/rpgen-search-test.ts",
     "test:all": "pnpm test:file && pnpm test:shell && pnpm test:llm && pnpm test:fetch && pnpm test:wikipedia && pnpm test:search && pnpm test:github && pnpm test:discord"
   },
   "keywords": [],
