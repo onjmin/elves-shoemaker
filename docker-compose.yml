@@ -1,0 +1,76 @@
+services:
+  agent:
+    build:
+      context: .
+      # 単体の Dockerfile は廃止し、ビルド定義はこの compose に一本化する。
+      dockerfile_inline: |
+        FROM ubuntu:22.04
+
+        # 使用するツールのバージョンを固定
+        ENV NODE_VERSION=24.13.0
+        ENV PNPM_VERSION=10.28.2
+
+        # ===== システムツールのインストール =====
+        # AIエージェントが「あるはず」と想定する標準的なコマンド群を揃える
+        RUN apt-get update && apt-get install -y \
+            git \
+            tree \
+            curl \
+            ca-certificates \
+            jq \
+            unzip \
+            bash \
+            xz-utils \
+         && rm -rf /var/lib/apt/lists/*
+
+        # ===== Node.js のインストール =====
+        RUN curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
+            | tar -xJ --strip-components=1 -C /usr/local
+
+        # ===== pnpm のインストール =====
+        RUN npm install -g pnpm@${PNPM_VERSION}
+
+        # ===== セキュリティ & 実行ユーザー設定 =====
+        # ホスト(WSL)側の一般ユーザーとUID(1000)を合わせ、ファイル所有権の競合を回避
+        RUN useradd -m -u 1000 agent
+
+        # 作業ディレクトリを準備し、非rootユーザー(agent)に権限を譲渡
+        WORKDIR /app
+        RUN chown agent:agent /app
+
+        # 以降のコマンド実行はすべて非rootユーザーで行う
+        USER agent
+
+        # ===== コンテナ起動時の挙動 =====
+        # 起動時は何もせず、対話シェルのみを起動する
+        # 依存関係のインストールや実行は、コンテナ内で人間が明示的に行う
+        CMD ["bash"]
+    image: elves-shoemaker
+    container_name: elves-shoemaker
+    stdin_open: true # docker run -i 相当
+    tty: true # docker run -t 相当
+
+    env_file:
+      - .env
+
+    # ホスト（Windows）側で動く LM Studio / Ollama など、LAN上のアドレスへ
+    # コンテナ内部から到達するための設定。Linux の Docker Engine では
+    # host.docker.internal は自動解決されないため明示的に登録する。
+    # .env 側では http://host.docker.internal:1234/v1 のように参照する。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - .:/app:rw
+
+    # --read-only + --cap-drop ALL 相当。破壊前提のサンドボックスとして
+    # ルートファイルシステムを読み取り専用にし、カーネル権限を全て剥奪する。
+    read_only: true
+    cap_drop:
+      - ALL
+
+    # pnpm や tsx が内部的にキャッシュ・一時ファイルを書き込むための領域。
+    # マウント外の書き込みはここだけに限定する。
+    tmpfs:
+      - /home/agent:rw,nosuid,size=1g,uid=1000,gid=1000,mode=700
+      - /tmp:rw,nosuid,noexec,size=256m

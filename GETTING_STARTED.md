@@ -198,6 +198,20 @@ curl http://192.168.0.23:1234
 Docker コンテナ → Windows の疎通確認は、
 **後続の Docker 起動手順完了後**に行います。
 
+> [!NOTE]
+> `docker-compose.yml` は `extra_hosts: host.docker.internal:host-gateway` を設定済みのため、
+> **Docker を動かしている Windows マシン自身**で LLM API が動いている場合に限り、
+> IP 直指定ではなく `host.docker.internal` で到達できます
+> （`.env` の `LLM_BASE_URL=http://host.docker.internal:1234/v1` を参照）。
+>
+> `host.docker.internal` は「Docker Engine のホストマシン」だけを指す特殊名であり、
+> LAN 上の任意のアドレスに解決されるわけではありません。
+> LLM や unj-reze が **別の LAN マシン**（例: `192.168.0.3`）で動いている場合は、
+> `host.docker.internal` は使えないため、そのマシンの IP を `.env` に直接指定してください
+> （コンテナは既定のブリッジネットワーク経由で LAN 上の他ホストへ普通に到達できます）。
+>
+> 上記の IP アドレスでの疎通確認は、あくまで「WSL → Windows」経路の切り分け用です。
+
 ### 1.6 プロジェクトのクローン
 
 Ubuntu ターミナルで：
@@ -251,10 +265,13 @@ nano .env
 > WSL側でインストールを行うと、**WSLの環境で実行される前提の `node_modules` が構築されてしまう**ため、Linuxコンテナ内での動作不良やバイナリ不整合の原因となります。  
 > もし誤って実行した場合は、 `rm -rf node_modules` で削除してから進めてください。
 
-### 3.1 Docker イメージのビルド
+本プロジェクトは **Docker Compose** で運用します（単体の `Dockerfile` は廃止し、ビルド定義は
+`docker-compose.yml` に一本化しています）。
+
+### 3.1 イメージのビルド
 
 ```bash
-docker build -t elves-shoemaker .
+docker compose build
 ```
 
 ### 3.2 安全なコンテナ起動
@@ -262,23 +279,26 @@ docker build -t elves-shoemaker .
 このコマンドを実行するとコンテナが立ち上がり、起動直後は自動的に **コンテナ内部のシェル** に入ります。
 
 ```bash
-docker run --rm -it \
-  --read-only \
-  --cap-drop ALL \
-  --tmpfs /home/agent:rw,nosuid,size=1g,uid=1000,gid=1000,mode=700 \
-  --tmpfs /tmp:rw,nosuid,noexec,size=256m \
-  -v $(pwd):/app:rw \
-  elves-shoemaker
+docker compose run --rm agent
 ```
 
-#### 引数の意味
+#### compose 側で設定済みの内容
 
-* **--rm**: コンテナ終了時に「箱」を完全破棄する。ホスト側の成果物は保持される
-* **-it**: インタラクティブモード。**起動後そのままコンテナ内で操作するために必要**
-* **--read-only**: ルートファイルシステム（`/`）を読み取り専用にし、OS破壊や永続的な改変を防止
-* **--cap-drop ALL**: Linux カーネルの権限をすべて削除し、権限昇格や不正操作を防止
-* **--tmpfs**: pnpm や tsx が内部的にキャッシュや一時ファイルを書き込むため、やむを得ずマウント外の領域にも一時的な書き込み先を用意する
-* **-v $(pwd):/app:rw**: ホストの作業ディレクトリを `/app` にマウント。ソースコードや成果物はホスト側に保持される
+`docker-compose.yml` に、以前 `docker run` の引数として渡していた設定をすべて定義済みです。
+
+* **read_only: true**: ルートファイルシステム（`/`）を読み取り専用にし、OS破壊や永続的な改変を防止
+* **cap_drop: [ALL]**: Linux カーネルの権限をすべて削除し、権限昇格や不正操作を防止
+* **tmpfs**: pnpm や tsx が内部的にキャッシュや一時ファイルを書き込むため、やむを得ずマウント外の領域にも一時的な書き込み先を用意する
+* **volumes: .:/app:rw**: ホストの作業ディレクトリを `/app` にマウント。ソースコードや成果物はホスト側に保持される
+* **env_file: .env**: `.env` を自動で読み込む（`docker run -e` の手打ちが不要になった）
+* **extra_hosts: host.docker.internal:host-gateway**: コンテナ内部から Windows 側（LM Studio 等）を含む
+  LAN 上のアドレスへ到達するための設定。`.env` の `LLM_BASE_URL` は `http://host.docker.internal:1234/v1`
+  のように指定する（`docker run --add-host=host.docker.internal:host-gateway` 相当）
+
+> [!TIP]
+> `docker compose run --rm agent` は `--rm` により終了時にコンテナを破棄しますが、
+> `docker-compose.yml` 自体（イメージ定義）はそのまま残ります。再ビルドが必要なのは
+> `docker-compose.yml` を編集したときだけです。
 
 ### 3.3 依存関係のインストール（初回のみ）
 
