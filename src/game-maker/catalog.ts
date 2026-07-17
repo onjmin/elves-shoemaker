@@ -299,6 +299,37 @@ export const ACTION_ENTITIES: Record<EntityType, EntityPreset> = {
 
 export const ENTITY_TYPES = Object.keys(ACTION_ENTITIES) as EntityType[];
 
+/** LLMが出しがちな別名 → 正式タイプの対応表（小文字で引く）。
+ *  テーマに引きずられて "dragon" や "enemy" 等を発明するため、機械的に吸収する。 */
+export const ENTITY_ALIASES: Record<string, EntityType> = {
+	enemy: "goomba",
+	monster: "goomba",
+	slime: "goomba",
+	mushroom: "goomba",
+	kuribo: "goomba",
+	turtle: "koopa",
+	kame: "koopa",
+	shell: "koopa",
+	ghost: "boo",
+	obake: "boo",
+	bomb: "bobomb",
+	bobomb: "bobomb",
+	skeleton: "drybones",
+	bones: "drybones",
+	dragon: "drybones",
+	boss: "drybones",
+	npc: "toad",
+	villager: "toad",
+	guide: "toad",
+	kinopio: "toad",
+	peach: "princess",
+	hime: "princess",
+	platform: "platformH",
+	lift: "platformH",
+	movingplatform: "platformH",
+	elevator: "platformV",
+};
+
 // ── BGM / SFX ─────────────────────────────────────────────────────────────
 // 外部URLを推測しない。mml: 参照はエンジン内蔵のMMLプレイヤーで再生されるため
 // 完全に自己完結する。BGM は雰囲気別の短いループを用意しておく。

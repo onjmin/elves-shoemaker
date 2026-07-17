@@ -3,7 +3,14 @@
 // LLM の出力（GameDesign）と最終成果物（ActionManifest）を Zod で二段階に検証する。
 
 import { z } from "zod";
-import { ENTITY_TYPES, MAX_WORLD_COLS, MIN_WORLD_COLS } from "./catalog";
+import {
+	ACTION_ENTITIES,
+	ENTITY_ALIASES,
+	ENTITY_TYPES,
+	type EntityType,
+	MAX_WORLD_COLS,
+	MIN_WORLD_COLS,
+} from "./catalog";
 
 // ── LLM が出力する中間表現（デザインJSON） ─────────────────────────────────
 // マニフェスト全体を LLM に書かせない。小さな決定だけを出力させ、
@@ -37,6 +44,43 @@ export const LevelDesignSchema = z.object({
 	entities: z.array(EntityPlacementSchema).max(80),
 });
 export type LevelDesign = z.infer<typeof LevelDesignSchema>;
+
+/** Zod検証の前に entities.type を正規化する。
+ *  一覧にある正式タイプはそのまま、別名（ENTITY_ALIASES）は正式タイプへ変換し、
+ *  それでも未知のタイプは「その1件だけ捨てて」警告にする（全体を失敗させない）。 */
+export function normalizeLevelDesign(raw: unknown): { data: unknown; warnings: string[] } {
+	const warnings: string[] = [];
+	if (
+		typeof raw !== "object" ||
+		raw === null ||
+		!Array.isArray((raw as { entities?: unknown }).entities)
+	) {
+		return { data: raw, warnings };
+	}
+	const obj = raw as { entities: unknown[] };
+	const entities = obj.entities.filter((e) => {
+		if (typeof e !== "object" || e === null) return true; // 型エラーはZodに任せる
+		const ent = e as { type?: unknown };
+		if (typeof ent.type !== "string") return true;
+		const key = ent.type.trim().toLowerCase();
+		if ((ENTITY_TYPES as string[]).includes(key)) {
+			ent.type = key;
+			return true;
+		}
+		const alias = ENTITY_ALIASES[key];
+		if (alias) {
+			warnings.push(`エンティティタイプ '${ent.type}' を '${alias}' として解釈しました`);
+			ent.type = alias;
+			return true;
+		}
+		warnings.push(`未知のエンティティタイプ '${ent.type}' を1件無視しました`);
+		return false;
+	});
+	return { data: { ...obj, entities }, warnings };
+}
+
+/** タイプ名が正式なものか（プロンプト・テスト用） */
+export const isKnownEntityType = (t: string): t is EntityType => t in ACTION_ENTITIES;
 
 // ── 最終成果物: GameManifestDraft（action エンジンサブセット） ──────────────
 // POST /api/games の body.manifest にそのまま入る形。

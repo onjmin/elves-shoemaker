@@ -51,7 +51,10 @@ export function lintActionManifest(m: ActionManifest): LintResult {
 		// 真下3マス以内に地面がなければ開幕落下死の恐れ
 		const hasGround = [1, 2, 3].some((d) => feetRow + d < rows && !passable(startCol, feetRow + d));
 		if (!supported(startCol, feetRow) && !hasGround) {
-			errors.push(`開始位置 (col ${startCol}) の下に地面がありません（開幕で穴に落ちます）`);
+			errors.push(
+				`開始位置 (col ${startCol}) の下に地面がありません（開幕で穴に落ちます）。` +
+					`'S' は地面 '=' のすぐ上の行（下から3行目あたり）に移動してください`,
+			);
 		}
 	}
 

@@ -50,7 +50,8 @@ ${tileLegend}
 - 中間地点に 'C'（チェックポイント）を1つ置く。
 
 ## エンティティ（敵・NPC・リフト）
-使えるタイプ:
+使えるタイプ（type は必ずこの英語IDから選ぶ。一覧にないタイプを発明しないこと。
+テーマに合う敵がいなくても、近いものをこの中から選ぶ）:
 ${entityLegend}
 
 - 敵は地面の上（rowは地面の1つ上）に置く。開始位置の近く3マス以内には置かない。
@@ -60,6 +61,9 @@ ${entityLegend}
 
 ## 出力形式
 以下のJSONだけを出力してください。説明文やコードブロックは不要です。
+- asciiMap は「${ROWS}個の文字列」の配列。1つの文字列が1行で、文字列の中に改行を入れない。
+- 'S'（開始位置）と 'G'（ゴール旗）を必ず含める。どちらも地面（'='）のすぐ上の行に置く。
+- entities の col は 0〜${concept.worldCols - 1} 、row は 0〜${ROWS - 1} の範囲。
 
 {
   "asciiMap": ["1行目の文字列", "2行目の文字列", ... 全${ROWS}行],
@@ -70,9 +74,19 @@ ${entityLegend}
 }`;
 }
 
-/** 検証エラーを渡して修正させる */
-export function repairPrompt(previousJson: string, errors: string[]): string {
-	return `あなたが直前に出力したレベルデザインJSONに問題が見つかりました。
+/** 検証エラーを渡して修正させる。
+ *  ローカルLLMには会話履歴が無い（毎回1プロンプト完結）ため、
+ *  元の課題（凡例・ルール一式）を必ず再掲する。エラーと前回出力だけを渡すと
+ *  モデルがルールを忘れて回を追うごとに劣化する。 */
+export function repairPrompt(
+	originalPrompt: string,
+	previousJson: string,
+	errors: string[],
+): string {
+	return `${originalPrompt}
+
+──────────────────────────────
+【重要】あなたの前回の出力には以下の問題がありました。
 
 ## 前回の出力
 ${previousJson}
@@ -80,6 +94,6 @@ ${previousJson}
 ## 検出された問題
 ${errors.map((e) => `- ${e}`).join("\n")}
 
-問題をすべて修正した完全なJSONを、同じ形式で出力し直してください。
+上記の課題のルールに従い、問題をすべて修正した完全なJSONを出力し直してください。
 説明文やコードブロックは不要です。JSONだけを出力してください。`;
 }
