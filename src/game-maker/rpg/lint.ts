@@ -1,7 +1,11 @@
 // ウォーキングシミュレーター用のセマンティックリント（マルチシーン版）。
 // 各シーン内は「4方向歩行＋同一シーン内ワープ」を辺とした BFS、
 // シーン間は「扉（warpSceneId）」を辺としたグラフで散策可能性を検証する。
+//
+// メッセージは英語（builder.ts と同じ理由：将来この検証結果を修正ループに
+// 載せることがあってもそのまま LLM に渡せる形に揃えておく）。
 
+import { plural } from "../../core/utils";
 import type { RpgManifest } from "./schema";
 
 export interface RpgLintResult {
@@ -35,7 +39,7 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 		map: number[][];
 		objects: LintObject[];
 	}[];
-	if (!scenes || scenes.length === 0) return { errors: ["scenes がありません"], warnings };
+	if (!scenes || scenes.length === 0) return { errors: ["No scenes"], warnings };
 
 	const passableOn = (map: number[][], c: number, r: number) => {
 		const row = map[r];
@@ -47,7 +51,7 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 	const startCol = Math.round(m.player.start.x / TILE_SIZE);
 	const startRow = Math.round(m.player.start.y / TILE_SIZE);
 	if (!passableOn(scenes[0].map, startCol, startRow)) {
-		errors.push(`開始位置 (${startCol}, ${startRow}) が壁の中です`);
+		errors.push(`Start position (${startCol}, ${startRow}) is inside a wall`);
 		return { errors, warnings };
 	}
 
@@ -59,7 +63,9 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 		for (const o of sc.objects) {
 			if (!o.warpSceneId) continue;
 			if (!scenes.some((s) => s.id === o.warpSceneId)) {
-				errors.push(`シーン '${sc.id}' の扉が存在しないシーン '${o.warpSceneId}' を指しています`);
+				errors.push(
+					`Scene '${sc.id}' has a door pointing to a nonexistent scene '${o.warpSceneId}'`,
+				);
 				continue;
 			}
 			const list = entries.get(o.warpSceneId) ?? [];
@@ -84,7 +90,7 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 	}
 	for (const sc of scenes) {
 		if (!reachableScenes.has(sc.id)) {
-			errors.push(`シーン '${sc.id}' に拠点からたどり着く扉がありません`);
+			errors.push(`Scene '${sc.id}' has no door reachable from the hub`);
 		}
 	}
 
@@ -107,7 +113,7 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 		const starts = (entries.get(sc.id) ?? []).filter((p) => passableOn(sc.map, p.col, p.row));
 		if (starts.length === 0) {
 			if (reachableScenes.has(sc.id)) {
-				errors.push(`シーン '${sc.id}' の入口（扉の出現座標）がすべて壁の中です`);
+				errors.push(`Scene '${sc.id}': all entry points (door arrival spots) are inside walls`);
 			}
 			continue;
 		}
@@ -159,10 +165,10 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 			if (isNpc) totalNpc++;
 			if (!near) {
 				if (o.warpSceneId) {
-					errors.push(`シーン '${sc.id}' の扉 ${o.emoji} (${o.col}, ${o.row}) に到達できません`);
+					errors.push(`Scene '${sc.id}': door ${o.emoji} at (${o.col}, ${o.row}) is unreachable`);
 				} else {
 					warnings.push(
-						`シーン '${sc.id}' の ${o.emoji} (${o.col}, ${o.row}) に到達できません（孤島にいます）`,
+						`Scene '${sc.id}': ${o.emoji} at (${o.col}, ${o.row}) is unreachable (isolated)`,
 					);
 				}
 			}
@@ -170,20 +176,24 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 	}
 
 	if (goalCount === 0) {
-		warnings.push("めざめの場所 'G' が無いため、クリアの無い永遠の散策マップになります");
+		warnings.push(
+			"There is no waking-up point 'G', so the map would wander forever with no ending",
+		);
 	} else if (!goalReachable) {
 		errors.push(
-			"めざめの場所 'G' に開始位置から歩いて（扉・ワープ経由でも）到達できません。通路をつなげてください",
+			"Waking-up point 'G' is unreachable from the start position (even via doors/warps). Connect it with a path",
 		);
 	}
 	if (goalCount > 1) {
-		warnings.push(`めざめの場所 'G' が ${goalCount} 個あります（1つを推奨）`);
+		warnings.push(
+			`There are ${plural(goalCount, "waking-up point 'G'", "waking-up points 'G'")} (1 is recommended)`,
+		);
 	}
 
-	if (totalNpc === 0) warnings.push("NPCが1人もいません（寂しすぎる夢になります）");
+	if (totalNpc === 0) warnings.push("There are no NPCs at all (the dream would feel too empty)");
 	if (totalWalkable < 250) {
 		warnings.push(
-			`全ワールドの歩ける範囲の合計が ${totalWalkable} マスしかありません（目安は250マス以上）`,
+			`Only ${plural(totalWalkable, "tile")} are walkable across all worlds combined (aim for 250+)`,
 		);
 	}
 
@@ -203,7 +213,7 @@ export function lintRpgManifest(m: RpgManifest): RpgLintResult {
 		}
 		for (const it of items) {
 			if (!placed.has(it.id)) {
-				warnings.push(`エフェクト '${it.id}'（${it.name}）がどのワールドにも置かれていません`);
+				warnings.push(`Effect '${it.id}' (${it.name}) is not placed in any world`);
 			}
 		}
 	}

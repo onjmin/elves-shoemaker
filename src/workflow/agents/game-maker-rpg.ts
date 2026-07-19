@@ -16,9 +16,11 @@ import { rpgConceptPrompt, rpgWorldPrompt } from "../../game-maker/rpg/prompts";
 import {
 	normalizeRpgLevel,
 	type RpgConcept,
+	RpgConceptJsonSchema,
 	RpgConceptSchema,
 	RpgManifestSchema,
 	type RpgWorldDef,
+	RpgWorldLevelJsonSchema,
 	RpgWorldLevelSchema,
 } from "../../game-maker/rpg/schema";
 import { postGame, unjRezeBaseUrl } from "../../game-maker/submit";
@@ -45,13 +47,16 @@ async function generateConcept(theme: string): Promise<RpgConcept> {
 	for (let i = 0; i < MAX_CONCEPT_RETRY; i++) {
 		const prompt =
 			lastError.length > 0
-				? `${rpgConceptPrompt(theme)}\n\n前回の出力は次の理由で不正でした。修正してください: ${lastError}`
+				? `${rpgConceptPrompt(theme)}\n\nYour previous output was invalid for the following reason. Please fix it: ${lastError}`
 				: rpgConceptPrompt(theme);
 		await savePromptLog("rpg-concept-input", prompt);
-		const { data, error, rawContent } = await llm.completeAsJson(prompt);
+		const { data, error, rawContent } = await llm.completeAsJson(prompt, {
+			schema: RpgConceptJsonSchema,
+			schemaName: "RpgConcept",
+		});
 		await savePromptLog("rpg-concept-output", rawContent);
 		if (!data) {
-			lastError = error ?? "JSONが見つかりません";
+			lastError = error ?? "No JSON found in the response";
 			continue;
 		}
 		const parsed = RpgConceptSchema.safeParse(data);
@@ -71,14 +76,17 @@ async function generateWorld(
 	let lastJson = "";
 	for (let i = 0; i < MAX_REPAIR; i++) {
 		await savePromptLog(`rpg-world-${worldDef.id}-input`, prompt);
-		const { data, error, rawContent } = await llm.completeAsJson(prompt);
+		const { data, error, rawContent } = await llm.completeAsJson(prompt, {
+			schema: RpgWorldLevelJsonSchema,
+			schemaName: "RpgWorldLevel",
+		});
 		await savePromptLog(`rpg-world-${worldDef.id}-output`, rawContent);
 		const errors: string[] = [];
 		const warnings: string[] = [];
 		let world: BuiltWorld | null = null;
 
 		if (!data) {
-			errors.push(error ?? "JSONが見つかりません");
+			errors.push(error ?? "No JSON found in the response");
 		} else {
 			lastJson = JSON.stringify(data);
 			const normalized = normalizeRpgLevel(data);

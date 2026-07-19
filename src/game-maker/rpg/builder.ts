@@ -5,7 +5,11 @@
 // 2段階のAPI:
 //   buildRpgWorld(concept, world, level)  … ワールド1つを検証・コンパイル（修正ループ用）
 //   assembleRpgManifest(concept, worlds)  … 全ワールドを扉でリンクしてマニフェスト化
+//
+// エラー/警告メッセージは英語で書く。修正ループの errors はそのまま repairPrompt に載って
+// LLM に返され、warnings もコンソールに一緒に表示されるため言語を揃えている。
 
+import { plural } from "../../core/utils";
 import { walkRef } from "../rpgen";
 import {
 	DOOR_DEFAULT_EMOJI,
@@ -45,21 +49,25 @@ export function parseRpgAsciiMap(rows: string[]): ParsedRpgMap {
 
 	let lines = rows.flatMap((r) => r.split(/\r?\n/));
 	if (lines.length !== rows.length) {
-		warnings.push("asciiMap の文字列内に改行が含まれていたため、行として分割しました");
+		warnings.push("asciiMap strings contained embedded newlines, so they were split into rows");
 	}
 	if (lines.some((l) => /[ 　]/.test(l))) {
-		warnings.push("空白文字を草原 '.' に置き換えました");
+		warnings.push("Replaced whitespace characters with grassland '.'");
 		lines = lines.map((l) => l.replace(/[ 　]/g, "."));
 	}
 
 	// 行数の正規化：足りなければ最終行を複製して埋め、多ければ下を捨てる
 	// （外周が M/W の行で終わることが多く、複製しても矛盾しにくい）。
 	if (lines.length < RPG_ROWS) {
-		warnings.push(`行数が ${lines.length} 行のため、最終行を複製して${RPG_ROWS}行にしました`);
+		warnings.push(
+			`Had only ${plural(lines.length, "row")}; duplicated the last row to reach ${RPG_ROWS} rows`,
+		);
 		const last = lines[lines.length - 1] ?? "M".repeat(RPG_COLS);
 		while (lines.length < RPG_ROWS) lines.push(last);
 	} else if (lines.length > RPG_ROWS) {
-		warnings.push(`行数が ${lines.length} 行のため、下の行を削って${RPG_ROWS}行にしました`);
+		warnings.push(
+			`Had ${plural(lines.length, "row")}; removed the extra bottom rows to reach ${RPG_ROWS} rows`,
+		);
 		lines = lines.slice(0, RPG_ROWS);
 	}
 
@@ -69,7 +77,10 @@ export function parseRpgAsciiMap(rows: string[]): ParsedRpgMap {
 		if (l.length === cols) return l;
 		const last = l[l.length - 1];
 		const pad = last !== undefined && RPG_SAFE_PAD.has(last) ? last : "M";
-		if (l.length > 0) warnings.push(`行${i + 1}が${l.length}文字のため '${pad}' で右埋めしました`);
+		if (l.length > 0)
+			warnings.push(
+				`Row ${i + 1} had ${plural(l.length, "character")}; right-padded with '${pad}'`,
+			);
 		return l.padEnd(cols, pad);
 	});
 
@@ -84,7 +95,9 @@ export function parseRpgAsciiMap(rows: string[]): ParsedRpgMap {
 			const ch = lines[r][c];
 			if (ch === RPG_START_CHAR) {
 				if (start)
-					errors.push(`開始位置 '${RPG_START_CHAR}' が複数あります（1つだけにしてください）`);
+					errors.push(
+						`There is more than one start position '${RPG_START_CHAR}' (must be exactly one)`,
+					);
 				start = { col: c, row: r };
 				row.push(0);
 				continue;
@@ -102,7 +115,9 @@ export function parseRpgAsciiMap(rows: string[]): ParsedRpgMap {
 	}
 
 	if (unknown.size > 0) {
-		errors.push(`凡例にない文字が使われています: ${[...unknown].map((c) => `'${c}'`).join(", ")}`);
+		errors.push(
+			`Used characters not in the legend: ${[...unknown].map((c) => `'${c}'`).join(", ")}`,
+		);
 	}
 
 	return { map, cols, start, goals, errors, warnings };
@@ -188,7 +203,8 @@ interface EventPageDraft {
 const msgCmd = (text: string): EventCommandDraft => ({ type: "message", text });
 
 /** 会話DSL → エンジンの EventPage 配列。先頭ページから条件マッチで選ばれるため、
- *  「エフェクト反応 → はじめて → ふだん」の順に並べる。 */
+ *  「エフェクト反応 → はじめて → ふだん」の順に並べる。
+ *  page name はエディタ上の表示ラベル（人間向け）のため日本語のまま。 */
 export function compileDialogue(dialogue: RpgDialogue): EventPageDraft[] {
 	const pages: EventPageDraft[] = [];
 	if (dialogue.ifEffect) {
@@ -282,17 +298,17 @@ export function buildRpgWorld(
 		const auto = findNearestPassable(map, centerCol, centerRow);
 		if (auto) {
 			warnings.push(
-				`拠点ワールドに開始位置 'S' が無かったため、(${auto.col}, ${auto.row}) を自動的に開始位置にしました`,
+				`The hub world had no start position 'S', so (${auto.col}, ${auto.row}) was automatically set as the start`,
 			);
 			start = auto;
 		} else {
 			errors.push(
-				`拠点ワールドには開始位置 '${RPG_START_CHAR}' が必要です（歩けるマスが1つも見つかりませんでした）`,
+				`The hub world needs a start position '${RPG_START_CHAR}' (no walkable tile could be found at all)`,
 			);
 		}
 	}
 	if (!isNexus && start) {
-		warnings.push(`開始位置 '${RPG_START_CHAR}' は拠点ワールド専用のため無視しました`);
+		warnings.push(`Ignored start position '${RPG_START_CHAR}' (only the hub world may have one)`);
 		start = null;
 	}
 
@@ -301,14 +317,14 @@ export function buildRpgWorld(
 	if (isEnding) {
 		if (parsed.goals.length !== 1) {
 			errors.push(
-				`このワールドはめざめの場所 'G' をちょうど1つ持つ必要があります（現在 ${parsed.goals.length} 個）`,
+				`This world must have exactly one waking-up point 'G' (currently has ${parsed.goals.length})`,
 			);
 		} else {
 			goal = parsed.goals[0];
 		}
 	} else if (parsed.goals.length > 0) {
 		warnings.push(
-			`めざめの場所 'G' はワールド '${concept.endingWorldId}' 専用のため、草原に置き換えました`,
+			`Waking-up point 'G' belongs only to world '${concept.endingWorldId}'; replaced with grassland`,
 		);
 		for (const g of parsed.goals) map[g.row][g.col] = 0;
 	}
@@ -323,14 +339,14 @@ export function buildRpgWorld(
 		let row = Math.min(row0, RPG_ROWS - 1);
 		if (col !== col0 || row !== row0) {
 			warnings.push(
-				`${label}: 座標 (${col0}, ${row0}) がマップ外のため (${col}, ${row}) に移動しました`,
+				`${label}: coordinates (${col0}, ${row0}) were outside the map, moved to (${col}, ${row})`,
 			);
 		}
 		if (!isPassableOn(map, col, row)) {
 			const moved = findNearestPassable(map, col, row);
 			if (!moved) return null;
 			warnings.push(
-				`${label}: (${col}, ${row}) が壁の中のため (${moved.col}, ${moved.row}) に移動しました`,
+				`${label}: (${col}, ${row}) was inside a wall, moved to (${moved.col}, ${moved.row})`,
 			);
 			col = moved.col;
 			row = moved.row;
@@ -339,7 +355,7 @@ export function buildRpgWorld(
 	};
 
 	if (start) {
-		const fixed = fixPosition(`開始位置 '${RPG_START_CHAR}'`, start.col, start.row);
+		const fixed = fixPosition(`start position '${RPG_START_CHAR}'`, start.col, start.row);
 		if (fixed) start = fixed;
 	}
 
@@ -390,7 +406,7 @@ export function buildRpgWorld(
 				});
 				if (entity.dialogue.ifEffect && !effectById.has(entity.dialogue.ifEffect.effectId)) {
 					errors.push(
-						`entities[${i}] (npc): dialogue.ifEffect.effectId '${entity.dialogue.ifEffect.effectId}' はコンセプトで宣言されていません`,
+						`entities[${i}] (npc): dialogue.ifEffect.effectId '${entity.dialogue.ifEffect.effectId}' was not declared in the concept`,
 					);
 				}
 			} else if (entity.message?.trim()) {
@@ -404,7 +420,9 @@ export function buildRpgWorld(
 					...sprite,
 				});
 			} else {
-				errors.push(`entities[${i}] (npc): message（一言）か dialogue（会話イベント）が必須です`);
+				errors.push(
+					`entities[${i}] (npc): requires either "message" (one-liner) or "dialogue" (talking event)`,
+				);
 				continue;
 			}
 			const text = entity.dialogue
@@ -422,10 +440,10 @@ export function buildRpgWorld(
 			npcSpots.push({ col: pos.col, row: pos.row, emoji, text });
 		} else if (entity.type === "warp") {
 			if (entity.toCol === undefined || entity.toRow === undefined) {
-				warnings.push(`entities[${i}] (warp): toCol/toRow が無いため無視しました`);
+				warnings.push(`entities[${i}] (warp): ignored — missing toCol/toRow`);
 				continue;
 			}
-			const dest = fixPosition(`entities[${i}] (warp の飛び先)`, entity.toCol, entity.toRow);
+			const dest = fixPosition(`entities[${i}] (warp destination)`, entity.toCol, entity.toRow);
 			if (!dest) continue;
 			objects.push({
 				...base,
@@ -437,12 +455,14 @@ export function buildRpgWorld(
 		} else if (entity.type === "door") {
 			if (!entity.toWorld || !worldIds.includes(entity.toWorld)) {
 				errors.push(
-					`entities[${i}] (door): toWorld '${entity.toWorld ?? ""}' が不正です（${worldIds.join(", ")} から選ぶ）`,
+					`entities[${i}] (door): toWorld '${entity.toWorld ?? ""}' is invalid (choose from: ${worldIds.join(", ")})`,
 				);
 				continue;
 			}
 			if (entity.toWorld === worldDef.id) {
-				errors.push(`entities[${i}] (door): toWorld が自分自身です（warp を使ってください）`);
+				errors.push(
+					`entities[${i}] (door): toWorld cannot be this world itself (use "warp" instead)`,
+				);
 				continue;
 			}
 			doors.push({
@@ -459,18 +479,18 @@ export function buildRpgWorld(
 			const def = entity.effectId ? effectById.get(entity.effectId) : undefined;
 			if (!def) {
 				errors.push(
-					`entities[${i}] (effect): effectId '${entity.effectId ?? ""}' はコンセプトで宣言されていません`,
+					`entities[${i}] (effect): effectId '${entity.effectId ?? ""}' was not declared in the concept`,
 				);
 				continue;
 			}
 			if (def.worldId !== worldDef.id) {
 				errors.push(
-					`entities[${i}] (effect): '${def.id}' はワールド '${def.worldId}' に置くものです`,
+					`entities[${i}] (effect): '${def.id}' belongs in world '${def.worldId}', not here`,
 				);
 				continue;
 			}
 			if (placedEffects.has(def.id)) {
-				warnings.push(`entities[${i}] (effect): '${def.id}' が重複配置されたため無視しました`);
+				warnings.push(`entities[${i}] (effect): ignored duplicate placement of '${def.id}'`);
 				continue;
 			}
 			placedEffects.add(def.id);
@@ -504,7 +524,7 @@ export function buildRpgWorld(
 	for (const def of assignedEffects) {
 		if (!placedEffects.has(def.id)) {
 			errors.push(
-				`エフェクト '${def.id}'（${def.emoji}${def.name}）をこのワールドに配置してください（type: "effect"）`,
+				`Place effect '${def.id}' (${def.emoji}${def.name}) somewhere in this world (type: "effect")`,
 			);
 		}
 	}
@@ -515,13 +535,15 @@ export function buildRpgWorld(
 		const missing = worldIds.slice(1).filter((id) => !covered.has(id));
 		if (missing.length > 0) {
 			errors.push(
-				`拠点ワールドには全ワールドへの扉が必要です。不足: ${missing.map((m) => `'${m}'`).join(", ")}`,
+				`The hub world needs a door to every other world. Missing: ${missing.map((m) => `'${m}'`).join(", ")}`,
 			);
 		}
 	} else {
 		const nexusId = worldIds[0];
 		if (!doors.some((d) => d.toWorld === nexusId)) {
-			errors.push(`拠点 '${nexusId}' へ戻る扉（type: "door", toWorld: "${nexusId}"）が必要です`);
+			errors.push(
+				`Needs a door back to the hub '${nexusId}' (type: "door", toWorld: "${nexusId}")`,
+			);
 		}
 	}
 
@@ -538,12 +560,14 @@ export function buildRpgWorld(
 	// 到達性の検証（エラー＝散策が壊れる、警告＝寂しいだけ）
 	for (const d of doors) {
 		if (!walkable.has(key(d.col, d.row))) {
-			errors.push(`扉 (${d.col}, ${d.row}) → '${d.toWorld}' に歩いて到達できません（孤島）`);
+			errors.push(
+				`Door at (${d.col}, ${d.row}) → '${d.toWorld}' is unreachable on foot (isolated)`,
+			);
 		}
 	}
 	if (goal && !walkable.has(key(goal.col, goal.row))) {
 		errors.push(
-			`めざめの場所 'G' (${goal.col}, ${goal.row}) に到達できません。通路をつなげてください`,
+			`Waking-up point 'G' at (${goal.col}, ${goal.row}) is unreachable. Connect it with a path`,
 		);
 	}
 	for (const o of objects) {
@@ -557,9 +581,9 @@ export function buildRpgWorld(
 		].some(([c, r]) => walkable.has(key(c, r)));
 		if (near) continue;
 		if (obj.objType === "event" && obj.name) {
-			errors.push(`エフェクト '${obj.name}' (${obj.col}, ${obj.row}) に到達できません`);
+			errors.push(`Effect '${obj.name}' at (${obj.col}, ${obj.row}) is unreachable`);
 		} else {
-			warnings.push(`${obj.emoji} (${obj.col}, ${obj.row}) に到達できません（孤島にいます）`);
+			warnings.push(`${obj.emoji} at (${obj.col}, ${obj.row}) is unreachable (isolated)`);
 		}
 	}
 	// その場に立つ会話NPCは体で通行をふさぐ（すり抜け不可のモブ）。
@@ -580,13 +604,13 @@ export function buildRpgWorld(
 		for (const d of doors) {
 			if (walkable.has(key(d.col, d.row)) && !walkable2.has(key(d.col, d.row))) {
 				errors.push(
-					`会話NPCが通路をふさいでいて、扉 (${d.col}, ${d.row}) → '${d.toWorld}' に行けなくなります。NPCを広い場所に移動してください`,
+					`A talking NPC is blocking the path, making the door at (${d.col}, ${d.row}) → '${d.toWorld}' unreachable. Move the NPC to a more open spot`,
 				);
 			}
 		}
 		if (goal && walkable.has(key(goal.col, goal.row)) && !walkable2.has(key(goal.col, goal.row))) {
 			errors.push(
-				`会話NPCが通路をふさいでいて、めざめの場所 'G' に行けなくなります。NPCを広い場所に移動してください`,
+				"A talking NPC is blocking the path, making the waking-up point 'G' unreachable. Move the NPC to a more open spot",
 			);
 		}
 	}
@@ -598,13 +622,13 @@ export function buildRpgWorld(
 			(goal !== null && fromDest.has(key(goal.col, goal.row)));
 		if (!canEscape) {
 			errors.push(
-				`warp の飛び先 (${e.to.col}, ${e.to.row}) から扉やめざめの場所に戻れません（詰みます）`,
+				`From warp destination (${e.to.col}, ${e.to.row}), there's no way back to any door or the waking-up point (this would soft-lock the game)`,
 			);
 		}
 	}
 
 	if (walkable.size < 60) {
-		warnings.push(`歩ける範囲が ${walkable.size} マスしかありません（目安は100マス以上）`);
+		warnings.push(`Only ${plural(walkable.size, "tile")} are walkable (aim for 100+)`);
 	}
 	// 地形の単調さチェック：外周を除く内側が草原('.')だけでほぼ埋まっていると、
 	// ただの空き地マップになりがち（実測例あり）。強制的に差し戻すほどではないため警告にとどめる。
@@ -619,12 +643,12 @@ export function buildRpgWorld(
 		}
 		if (interiorTotal > 100 && interiorPlain / interiorTotal > 0.9) {
 			warnings.push(
-				`地形の変化が少なく、内側の ${Math.round((interiorPlain / interiorTotal) * 100)}% が草原だけの空き地になっています（水辺・森・部屋などを増やすと良い）`,
+				`Terrain is too uniform — ${Math.round((interiorPlain / interiorTotal) * 100)}% of the interior is bare grassland (add more water, forest, or rooms)`,
 			);
 		}
 	}
 	if (npcSpots.length === 0) {
-		warnings.push("NPCが1人もいません（寂しすぎる夢になります）");
+		warnings.push("There are no NPCs at all (the dream would feel too empty)");
 	}
 	// 弱いLLMは同じNPC・同じセリフを複製しがち（実測: 同一セリフのNPCが十数体連続で出力された例あり）。
 	// 一言一句同じ内容が複数体で使い回されていたら、コピペとみなして差し戻す。
@@ -636,7 +660,7 @@ export function buildRpgWorld(
 	for (const [text, count] of textCounts) {
 		if (count >= 2) {
 			errors.push(
-				`同じセリフ「${text.slice(0, 20)}${text.length > 20 ? "…" : ""}」を持つNPCが ${count} 体います。全員ちがう内容にしてください`,
+				`${plural(count, "NPC")} share the exact same line "${text.slice(0, 20)}${text.length > 20 ? "…" : ""}". Give every NPC different dialogue`,
 			);
 		}
 	}
@@ -678,11 +702,11 @@ export function assembleRpgManifest(concept: RpgConcept, worlds: BuiltWorld[]): 
 
 	const byId = new Map(worlds.map((w) => [w.def.id, w]));
 	for (const def of concept.worlds) {
-		if (!byId.has(def.id)) errors.push(`ワールド '${def.id}' のビルド結果がありません`);
+		if (!byId.has(def.id)) errors.push(`No build result for world '${def.id}'`);
 	}
 	const nexus = byId.get(concept.worlds[0].id);
 	if (!nexus?.start) {
-		errors.push("拠点ワールドの開始位置がありません");
+		errors.push("The hub world has no start position");
 	}
 	if (errors.length > 0) return { manifest: null, errors, warnings };
 	const start = (nexus as BuiltWorld).start as { col: number; row: number };
@@ -718,7 +742,7 @@ export function assembleRpgManifest(concept: RpgConcept, worlds: BuiltWorld[]): 
 					entry = fixed;
 				} else {
 					warnings.push(
-						`扉 '${w.def.id}'→'${d.toWorld}' の出現座標 (${d.toCol}, ${d.toRow}) が孤島のため安全な位置へ変更しました`,
+						`Door '${w.def.id}' → '${d.toWorld}' arrival point (${d.toCol}, ${d.toRow}) was isolated; moved to a safe spot`,
 					);
 				}
 			}

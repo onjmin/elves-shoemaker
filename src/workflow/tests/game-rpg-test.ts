@@ -170,7 +170,7 @@ const noStart = buildRpgWorld(concept, concept.worlds[0], {
 check("Sが無くてもビルド成功", noStart.world !== null, noStart.errors.join("; "));
 check(
 	"自動補正の警告が出る",
-	noStart.warnings.some((w) => w.includes("自動的に開始位置")),
+	noStart.warnings.some((w) => w.includes("automatically set as the start")),
 	noStart.warnings.join("; "),
 );
 
@@ -181,7 +181,7 @@ const noWalkable = buildRpgWorld(concept, concept.worlds[0], {
 });
 check(
 	"歩けるマス皆無を検出",
-	noWalkable.errors.some((e) => e.includes("開始位置")),
+	noWalkable.errors.some((e) => e.includes("start position")),
 	noWalkable.errors.join("; "),
 );
 
@@ -203,7 +203,7 @@ const noReturn = buildRpgWorld(concept, concept.worlds[1], {
 });
 check(
 	"拠点へ戻る扉の欠落を検出",
-	noReturn.errors.some((e) => e.includes("戻る扉")),
+	noReturn.errors.some((e) => e.includes("door back to the hub")),
 	noReturn.errors.join("; "),
 );
 const goalInForest = buildRpgWorld(concept, concept.worlds[1], {
@@ -212,7 +212,8 @@ const goalInForest = buildRpgWorld(concept, concept.worlds[1], {
 });
 check(
 	"エンディング以外の G は警告つきで草原化",
-	goalInForest.errors.length === 0 && goalInForest.warnings.some((w) => w.includes("専用")),
+	goalInForest.errors.length === 0 &&
+		goalInForest.warnings.some((w) => w.includes("belongs only to world")),
 	[...goalInForest.errors, ...goalInForest.warnings].join("; "),
 );
 
@@ -229,7 +230,7 @@ const isolated = buildRpgWorld(concept, concept.worlds[2], {
 });
 check(
 	"到達不能を検出",
-	isolated.errors.some((e) => e.includes("到達")),
+	isolated.errors.some((e) => e.includes("unreachable")),
 	isolated.errors.join("; "),
 );
 
@@ -254,7 +255,7 @@ const pocket = buildRpgWorld(concept, concept.worlds[0], {
 });
 check(
 	"袋小路ワープを検出",
-	pocket.errors.some((e) => e.includes("詰み")),
+	pocket.errors.some((e) => e.includes("soft-lock")),
 	pocket.errors.join("; "),
 );
 
@@ -275,7 +276,7 @@ const plugged = buildRpgWorld(concept, concept.worlds[0], {
 });
 check(
 	"通路の栓を検出",
-	plugged.errors.some((e) => e.includes("ふさいで")),
+	plugged.errors.some((e) => e.includes("blocking the path")),
 	plugged.errors.join("; "),
 );
 
@@ -291,7 +292,7 @@ const drifted = buildRpgWorld(concept, concept.worlds[0], {
 check("補正してビルド成功", drifted.world !== null, drifted.errors.join("; "));
 check(
 	"移動の警告が出る",
-	drifted.warnings.some((w) => w.includes("移動")),
+	drifted.warnings.some((w) => w.includes("moved to")),
 	drifted.warnings.join("; "),
 );
 
@@ -307,7 +308,7 @@ const cloned = buildRpgWorld(concept, concept.worlds[0], {
 });
 check(
 	"複製NPCを検出",
-	cloned.errors.some((e) => e.includes("おなじセリフ")),
+	cloned.errors.some((e) => e.includes("share the exact same line")),
 	cloned.errors.join("; "),
 );
 
@@ -315,7 +316,7 @@ console.log("[9c] 警告: 内側がほぼ草原だけの単調な地形");
 const blankInterior = buildRpgWorld(concept, concept.worlds[0], nexusLevel);
 check(
 	"地形の単調さを警告",
-	blankInterior.warnings.some((w) => w.includes("空き地")),
+	blankInterior.warnings.some((w) => w.includes("bare grassland")),
 	blankInterior.warnings.join("; "),
 );
 

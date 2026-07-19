@@ -10,7 +10,10 @@ const slug = z
 	.string()
 	.trim()
 	.toLowerCase()
-	.regex(/^[a-z][a-z0-9_-]{0,15}$/, "英小文字はじまりの英数字ID（16文字以内）にしてください");
+	.regex(
+		/^[a-z][a-z0-9_-]{0,15}$/,
+		"must be a lowercase-letter-first alphanumeric id, 16 characters or fewer",
+	);
 
 /** ステージ1: コンセプト（夢世界の一覧を含む） */
 export const RpgWorldDefSchema = z.object({
@@ -49,20 +52,20 @@ export const RpgConceptSchema = z
 	.superRefine((c, ctx) => {
 		const ids = c.worlds.map((w) => w.id);
 		if (new Set(ids).size !== ids.length) {
-			ctx.addIssue({ code: "custom", path: ["worlds"], message: "worlds の id が重複しています" });
+			ctx.addIssue({ code: "custom", path: ["worlds"], message: "worlds ids must be unique" });
 		}
 		if (!ids.includes(c.endingWorldId)) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["endingWorldId"],
-				message: `endingWorldId '${c.endingWorldId}' が worlds に存在しません`,
+				message: `endingWorldId '${c.endingWorldId}' does not match any id in worlds`,
 			});
 		}
 		if (c.endingWorldId === ids[0]) {
 			ctx.addIssue({
 				code: "custom",
 				path: ["endingWorldId"],
-				message: "endingWorldId は最初のワールド（拠点）以外にしてください",
+				message: "endingWorldId must not be the first world (that's the hub)",
 			});
 		}
 		const effIds = c.effects.map((e) => e.id);
@@ -70,7 +73,7 @@ export const RpgConceptSchema = z
 			ctx.addIssue({
 				code: "custom",
 				path: ["effects"],
-				message: "effects の id が重複しています",
+				message: "effects ids must be unique",
 			});
 		}
 		for (const [i, e] of c.effects.entries()) {
@@ -78,7 +81,7 @@ export const RpgConceptSchema = z
 				ctx.addIssue({
 					code: "custom",
 					path: ["effects", i, "worldId"],
-					message: `effects[${i}].worldId '${e.worldId}' が worlds に存在しません`,
+					message: `effects[${i}].worldId '${e.worldId}' does not match any id in worlds`,
 				});
 			}
 		}
@@ -146,6 +149,12 @@ export const RpgWorldLevelSchema = z.object({
 });
 export type RpgWorldLevel = z.infer<typeof RpgWorldLevelSchema>;
 
+// OpenAI互換の response_format.json_schema にそのまま渡せる形（Zod v4 のネイティブ変換）。
+// superRefine によるクロスフィールド制約（endingWorldId が worlds に含まれる等）は
+// JSON Schema で表現できないため反映されない点に注意——そこは従来通り safeParse 側で検証する。
+export const RpgConceptJsonSchema = z.toJSONSchema(RpgConceptSchema);
+export const RpgWorldLevelJsonSchema = z.toJSONSchema(RpgWorldLevelSchema);
+
 /** Zod検証前の正規化：エンティティタイプの別名吸収・未知タイプの破棄。 */
 export function normalizeRpgLevel(raw: unknown): { data: unknown; warnings: string[] } {
 	const warnings: string[] = [];
@@ -168,11 +177,11 @@ export function normalizeRpgLevel(raw: unknown): { data: unknown; warnings: stri
 		}
 		const alias = RPG_ENTITY_ALIASES[key];
 		if (alias) {
-			warnings.push(`エンティティタイプ '${ent.type}' を '${alias}' として解釈しました`);
+			warnings.push(`Interpreted entity type '${ent.type}' as '${alias}'`);
 			ent.type = alias;
 			return true;
 		}
-		warnings.push(`未知のエンティティタイプ '${ent.type}' を1件無視しました`);
+		warnings.push(`Ignored 1 entity with unknown type '${ent.type}'`);
 		return false;
 	});
 	return { data: { ...obj, entities }, warnings };

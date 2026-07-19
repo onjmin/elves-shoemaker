@@ -57,8 +57,14 @@ export const llm = {
 
 	async completeAsJson(
 		prompt: string,
+		opts?: { schema?: object; schemaName?: string },
 	): Promise<{ data: object | null; error: string | null; rawContent: string }> {
-		const res = await this.ask(prompt);
+		// OpenAI互換の JSON mode。schema を渡した場合は response_format: json_schema として送り、
+		// 対応サーバー（LM Studio 等）ではグラマー制約付き生成になるため、
+		// 「JSONの外側に説明文が混ざる」「構文が壊れる」「キーの型が違う」種類の失敗を構造的に防げる。
+		// ただし cross-field 制約（例: endingWorldId が worlds に含まれる）までは表現できないため、
+		// Zod検証と修正ループは従来通り必要。schema 未指定時は json_object（構文のみ保証）にフォールバック。
+		const res = await this.ask(prompt, { jsonMode: true, ...opts });
 		const { data, error } = repairAndParseJSON(res.content);
 		return { data, error, rawContent: res.content };
 	},
@@ -82,7 +88,10 @@ export const llm = {
 		}
 	},
 
-	async ask(prompt: string): Promise<LLMOutput> {
+	async ask(
+		prompt: string,
+		opts?: { jsonMode?: boolean; schema?: object; schemaName?: string },
+	): Promise<LLMOutput> {
 		let lastErr: unknown;
 		for (let attempt = 1; attempt <= LLM_MAX_RETRY; attempt++) {
 			const startedAt = Date.now();
@@ -101,6 +110,19 @@ export const llm = {
 						frequency_penalty: LLM_FREQUENCY_PENALTY,
 						presence_penalty: LLM_PRESENCE_PENALTY,
 						max_tokens: LLM_MAX_TOKENS,
+						...(opts?.jsonMode
+							? opts.schema
+								? {
+										response_format: {
+											type: "json_schema",
+											json_schema: {
+												name: opts.schemaName ?? "response",
+												schema: opts.schema,
+											},
+										},
+									}
+								: { response_format: { type: "json_object" } }
+							: {}),
 					}),
 					// Node標準fetch（undici）拡張の非標準オプション。型定義に無いため as で通す。
 					dispatcher: llmDispatcher,
