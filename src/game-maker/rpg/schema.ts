@@ -140,7 +140,9 @@ export type RpgEntity = z.infer<typeof RpgEntitySchema>;
 
 export const RpgWorldLevelSchema = z.object({
 	asciiMap: z.array(z.string()).min(8).max(40),
-	entities: z.array(RpgEntitySchema).max(60),
+	// 弱いLLMは指示を無視して同じNPCを大量に複製しがちなため、実用上の目安（15個程度）より
+	// かなり寛容だが、暴走出力（数十個の複製）は確実に弾ける値に抑える。
+	entities: z.array(RpgEntitySchema).max(24),
 });
 export type RpgWorldLevel = z.infer<typeof RpgWorldLevelSchema>;
 

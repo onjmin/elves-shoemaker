@@ -2,6 +2,7 @@ import "dotenv/config";
 import { promises as fs } from "node:fs";
 import { resolve } from "node:path";
 import { emitDiscordWebhook } from "../../core/discord-webhook";
+import { initDebugLog, isDebugMode, savePromptLog, setLogTurn } from "../../core/debug-log";
 import { llm } from "../../core/llm-client";
 import { repairPrompt } from "../../game-maker/prompts";
 import {
@@ -46,7 +47,9 @@ async function generateConcept(theme: string): Promise<RpgConcept> {
 			lastError.length > 0
 				? `${rpgConceptPrompt(theme)}\n\n前回の出力は次の理由で不正でした。修正してください: ${lastError}`
 				: rpgConceptPrompt(theme);
-		const { data, error } = await llm.completeAsJson(prompt);
+		await savePromptLog("rpg-concept-input", prompt);
+		const { data, error, rawContent } = await llm.completeAsJson(prompt);
+		await savePromptLog("rpg-concept-output", rawContent);
 		if (!data) {
 			lastError = error ?? "JSONが見つかりません";
 			continue;
@@ -67,7 +70,9 @@ async function generateWorld(
 	let prompt = basePrompt;
 	let lastJson = "";
 	for (let i = 0; i < MAX_REPAIR; i++) {
-		const { data, error } = await llm.completeAsJson(prompt);
+		await savePromptLog(`rpg-world-${worldDef.id}-input`, prompt);
+		const { data, error, rawContent } = await llm.completeAsJson(prompt);
+		await savePromptLog(`rpg-world-${worldDef.id}-output`, rawContent);
 		const errors: string[] = [];
 		const warnings: string[] = [];
 		let world: BuiltWorld | null = null;
@@ -96,6 +101,9 @@ async function generateWorld(
 		}
 		console.log(`  ⚠ ワールド '${worldDef.id}' 検証NG (${i + 1}/${MAX_REPAIR}):`);
 		for (const e of errors) console.log(`    - ${e}`);
+		// 診断用：警告（未知タイプの破棄・自動補正など）も表示する。
+		// エラーに直結しない逸脱がここに出ていることが多く、モデルの癖の把握に役立つ。
+		for (const w of warnings) console.log(`    ⚠ ${w}`);
 		// 診断用：モデルが実際に出したマップを表示する
 		const rawRows = (data as { asciiMap?: unknown } | null)?.asciiMap;
 		if (Array.isArray(rawRows)) {
@@ -111,6 +119,8 @@ export async function run() {
 	const theme = process.env.GAME_THEME || "しずかな夢の世界の散策";
 	const shouldSubmit = process.env.UNJ_REZE_SUBMIT === "1";
 
+	await initDebugLog();
+
 	console.log("--- Game Maker Agent (ウォーキングシミュレーター) 起動 ---");
 	console.log(`テーマ: ${theme}`);
 	await emitDiscordWebhook(
@@ -118,7 +128,18 @@ export async function run() {
 	);
 
 	try {
+		console.log("[0/4] LLM疎通確認中...");
+		const ping = await llm.ping();
+		if (!ping.ok) {
+			throw new StageError(
+				`LLMサーバーに接続できません（${ping.error}）。LLM_BASE_URL の起動状態を確認してください。` +
+					"（このチェックをすり抜けても生成リクエスト自体がタイムアウトする可能性は残ります）",
+			);
+		}
+		console.log("  ✓ 疎通OK");
+
 		console.log("[1/4] コンセプト生成中...");
+		if (isDebugMode) setLogTurn(1);
 		const concept = await generateConcept(theme);
 		console.log(`  ✓ 「${concept.title}」`);
 		console.log(`    ワールド: ${concept.worlds.map((w) => `${w.name}(${w.mood})`).join(" → ")}`);
@@ -133,6 +154,7 @@ export async function run() {
 		const worlds: BuiltWorld[] = [];
 		for (const [i, worldDef] of concept.worlds.entries()) {
 			console.log(`  (${i + 1}/${concept.worlds.length}) 「${worldDef.name}」...`);
+			if (isDebugMode) setLogTurn(i + 2);
 			const { world, warnings } = await generateWorld(concept, worldDef);
 			worlds.push(world);
 			allWarnings.push(...warnings.map((w) => `[${worldDef.id}] ${w}`));

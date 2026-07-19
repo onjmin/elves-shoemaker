@@ -273,10 +273,23 @@ export function buildRpgWorld(
 	const warnings = [...parsed.warnings];
 	const map = parsed.map;
 
-	// 開始位置 S：拠点だけが持つ
+	// 開始位置 S：拠点だけが持つ。無ければゲームを壊さない範囲で自動補正する
+	// （地形自体は壊れていないので、中央付近の歩けるマスを開始位置にする）。
 	let start = parsed.start;
 	if (isNexus && !start) {
-		errors.push(`拠点ワールドには開始位置 '${RPG_START_CHAR}' が必要です（歩けるマスに1つ）`);
+		const centerCol = Math.floor(parsed.cols / 2);
+		const centerRow = Math.floor(RPG_ROWS / 2);
+		const auto = findNearestPassable(map, centerCol, centerRow);
+		if (auto) {
+			warnings.push(
+				`拠点ワールドに開始位置 'S' が無かったため、(${auto.col}, ${auto.row}) を自動的に開始位置にしました`,
+			);
+			start = auto;
+		} else {
+			errors.push(
+				`拠点ワールドには開始位置 '${RPG_START_CHAR}' が必要です（歩けるマスが1つも見つかりませんでした）`,
+			);
+		}
 	}
 	if (!isNexus && start) {
 		warnings.push(`開始位置 '${RPG_START_CHAR}' は拠点ワールド専用のため無視しました`);
@@ -338,7 +351,7 @@ export function buildRpgWorld(
 	const doors: DoorSpec[] = [];
 	const warpEdges: BuiltWorld["warpEdges"] = [];
 	const placedEffects = new Set<string>();
-	const npcSpots: { col: number; row: number; emoji: string }[] = [];
+	const npcSpots: { col: number; row: number; emoji: string; text: string }[] = [];
 
 	for (const [i, e] of level.entities.entries()) {
 		const entity = e as RpgEntity;
@@ -394,7 +407,19 @@ export function buildRpgWorld(
 				errors.push(`entities[${i}] (npc): message（一言）か dialogue（会話イベント）が必須です`);
 				continue;
 			}
-			npcSpots.push({ col: pos.col, row: pos.row, emoji });
+			const text = entity.dialogue
+				? [
+						...entity.dialogue.lines,
+						...(entity.dialogue.onceLines ?? []),
+						...(entity.dialogue.choice
+							? [
+									entity.dialogue.choice.prompt,
+									...entity.dialogue.choice.options.flatMap((o) => o.lines),
+								]
+							: []),
+					].join("\n")
+				: (entity.message?.trim() ?? "");
+			npcSpots.push({ col: pos.col, row: pos.row, emoji, text });
 		} else if (entity.type === "warp") {
 			if (entity.toCol === undefined || entity.toRow === undefined) {
 				warnings.push(`entities[${i}] (warp): toCol/toRow が無いため無視しました`);
@@ -581,8 +606,39 @@ export function buildRpgWorld(
 	if (walkable.size < 60) {
 		warnings.push(`歩ける範囲が ${walkable.size} マスしかありません（目安は100マス以上）`);
 	}
+	// 地形の単調さチェック：外周を除く内側が草原('.')だけでほぼ埋まっていると、
+	// ただの空き地マップになりがち（実測例あり）。強制的に差し戻すほどではないため警告にとどめる。
+	{
+		let interiorTotal = 0;
+		let interiorPlain = 0;
+		for (let r = 1; r < RPG_ROWS - 1; r++) {
+			for (let c = 1; c < parsed.cols - 1; c++) {
+				interiorTotal++;
+				if ((map[r]?.[c] ?? 0) === 0) interiorPlain++;
+			}
+		}
+		if (interiorTotal > 100 && interiorPlain / interiorTotal > 0.9) {
+			warnings.push(
+				`地形の変化が少なく、内側の ${Math.round((interiorPlain / interiorTotal) * 100)}% が草原だけの空き地になっています（水辺・森・部屋などを増やすと良い）`,
+			);
+		}
+	}
 	if (npcSpots.length === 0) {
 		warnings.push("NPCが1人もいません（寂しすぎる夢になります）");
+	}
+	// 弱いLLMは同じNPC・同じセリフを複製しがち（実測: 同一セリフのNPCが十数体連続で出力された例あり）。
+	// 一言一句同じ内容が複数体で使い回されていたら、コピペとみなして差し戻す。
+	const textCounts = new Map<string, number>();
+	for (const n of npcSpots) {
+		if (!n.text) continue;
+		textCounts.set(n.text, (textCounts.get(n.text) ?? 0) + 1);
+	}
+	for (const [text, count] of textCounts) {
+		if (count >= 2) {
+			errors.push(
+				`同じセリフ「${text.slice(0, 20)}${text.length > 20 ? "…" : ""}」を持つNPCが ${count} 体います。全員ちがう内容にしてください`,
+			);
+		}
 	}
 
 	if (errors.length > 0) {

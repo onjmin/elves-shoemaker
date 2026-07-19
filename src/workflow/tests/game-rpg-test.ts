@@ -162,15 +162,27 @@ check(
 	pages[1].commands.some((c) => c.type === "setSelfSwitch"),
 );
 
-console.log("[3] 異常系: 拠点に S なし");
+console.log("[3] 自動補正: 拠点に S なし（弱いLLMがSを書き忘れても続行する）");
 const noStart = buildRpgWorld(concept, concept.worlds[0], {
 	asciiMap: nexusMap.map((r) => r.replace("S", ".")),
 	entities: nexusLevel.entities,
 });
+check("Sが無くてもビルド成功", noStart.world !== null, noStart.errors.join("; "));
 check(
-	"S欠落を検出",
-	noStart.errors.some((e) => e.includes("開始位置")),
-	noStart.errors.join("; "),
+	"自動補正の警告が出る",
+	noStart.warnings.some((w) => w.includes("自動的に開始位置")),
+	noStart.warnings.join("; "),
+);
+
+console.log("[3b] 異常系: 歩けるマスが1つも無い（自動補正も不可能）");
+const noWalkable = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: Array.from({ length: 24 }, () => "M".repeat(30)),
+	entities: [],
+});
+check(
+	"歩けるマス皆無を検出",
+	noWalkable.errors.some((e) => e.includes("開始位置")),
+	noWalkable.errors.join("; "),
 );
 
 console.log("[4] 異常系: 拠点の扉が足りない");
@@ -281,6 +293,30 @@ check(
 	"移動の警告が出る",
 	drifted.warnings.some((w) => w.includes("移動")),
 	drifted.warnings.join("; "),
+);
+
+console.log("[9b] 異常系: 同じセリフを使い回すNPCの量産（コピペ検出）");
+const cloned = buildRpgWorld(concept, concept.worlds[0], {
+	asciiMap: nexusMap,
+	entities: [
+		...nexusLevel.entities,
+		{ type: "npc", col: 20, row: 10, emoji: "🌙", message: "おなじセリフ" },
+		{ type: "npc", col: 21, row: 12, emoji: "🌙", message: "おなじセリフ" },
+		{ type: "npc", col: 22, row: 14, emoji: "🌙", message: "おなじセリフ" },
+	],
+});
+check(
+	"複製NPCを検出",
+	cloned.errors.some((e) => e.includes("おなじセリフ")),
+	cloned.errors.join("; "),
+);
+
+console.log("[9c] 警告: 内側がほぼ草原だけの単調な地形");
+const blankInterior = buildRpgWorld(concept, concept.worlds[0], nexusLevel);
+check(
+	"地形の単調さを警告",
+	blankInterior.warnings.some((w) => w.includes("空き地")),
+	blankInterior.warnings.join("; "),
 );
 
 console.log("[10] 正規化: 別名・未知タイプ");
