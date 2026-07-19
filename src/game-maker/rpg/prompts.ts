@@ -2,47 +2,56 @@
 // 凡例・ルールは catalog.ts から自動生成し、プロンプトとバリデータの乖離を防ぐ。
 // ローカルLLM前提のため出力は常に「小さなJSONだけ」：コンセプト1回＋ワールドごとに1回。
 // 修正プロンプトは ../prompts.ts の repairPrompt（課題全文を再掲する方式）を共用する。
+//
+// 指示文（ルール・出力形式の説明）は英語で書く。ローカルLLMは英語の指示追従の方が
+// 総じて安定しやすいため。一方、ゲームの実際の文章（タイトル・セリフ等）は日本語の
+// ゲームとして出したいので、該当キーには "in Japanese" と明記して要求する。
 
 import { RPG_COLS, RPG_MOOD_HINTS, RPG_MOODS, RPG_ROWS, RPG_TILES } from "./catalog";
 import type { RpgConcept, RpgWorldDef } from "./schema";
 
-const tileLegend = RPG_TILES.map((t) => `  '${t.char}' = ${t.name}: ${t.hint}`).join("\n");
-const moodList = RPG_MOODS.map((m) => `"${m}"（${RPG_MOOD_HINTS[m]}）`).join(" | ");
+const tileLegend = RPG_TILES.map((t) => `  '${t.char}' = ${t.name} (${t.hint})`).join("\n");
+const moodList = RPG_MOODS.map((m) => `"${m}" (${RPG_MOOD_HINTS[m]})`).join(" | ");
 
 /** ステージ1: コンセプト（夢世界の一覧＋収集エフェクト） */
 export function rpgConceptPrompt(theme: string): string {
-	return `あなたは「ウォーキングシミュレーター」（ゆめにっき系）のデザイナーです。
-戦闘や敵は一切なく、いくつもの不思議な夢世界を扉でわたり歩くゲームです。
-次のテーマで新しい夢のコンセプトを1つ考えてください。
+	return `You are designing a "walking simulator" dream game in the style of Yume Nikki.
+There is no combat and no enemies — the player wanders through several strange dream
+worlds connected by doors. Come up with one new dream concept for the theme below.
 
-テーマ: ${theme}
+Theme: ${theme}
 
-## 世界の構成
-- worlds は3〜5個。最初の1つが「拠点」（ゆめにっきのネクサス）で、他の全世界への扉が並ぶ静かな場所。
-- 残りは雰囲気のちがう夢世界。theme には「何が見える場所か」を具体的な情景で1行書く
-  （例:「さかさまの鳥居が水面から生えている赤い湿原」）。
-- endingWorldId には「めざめの場所」を置く最も奥のワールドを1つ選ぶ（拠点以外）。
-- effects は世界に落ちている収集アイテム（0〜3個）。拾うとNPCの反応が変わる小道具
-  （例: ランタン、ちいさなカギ、しおれた花）。worldId でどの世界に置くか決める。
+## World structure
+- "worlds" must have 3 to 5 entries. The first one is the "hub" (like Yume Nikki's
+  Nexus) — a quiet place with doors to every other world.
+- The rest are dream worlds with different moods. "theme" is one line describing what
+  the player actually sees there, in Japanese (e.g. "赤い湿原に逆さまの鳥居が水面から生えている").
+- "endingWorldId" is the one world (not the hub) where the "waking-up point" will be
+  placed — pick the world meant to feel deepest / furthest in.
+- "effects" are 0 to 3 collectible items scattered in the worlds. Picking one up can
+  change how NPCs react to the player (e.g. a lantern, a small key, a wilted flower).
+  "worldId" says which world each one is placed in.
 
-以下のキーを持つJSONだけを出力してください。説明文やコードブロックは不要です。
+Output ONLY a JSON object with the following keys. No explanation, no code fences.
+Write "title", "subtitle", "endingMessage", world "name"/"theme", and effect "name" in
+natural Japanese — this is a Japanese-language game.
 
 {
-  "title": "ゲームタイトル（20文字以内、不思議な雰囲気）",
-  "subtitle": "タイトル画面の副題（30文字以内）",
-  "endingMessage": "夢から覚めたときに表示する文（100文字以内、余韻のある文。改行は\\n）",
-  "playerEmoji": "主人公の絵文字1つ",
+  "title": "game title, in Japanese, under 20 chars, dreamlike mood",
+  "subtitle": "title screen subtitle, in Japanese, under 30 chars",
+  "endingMessage": "shown when the player wakes up, in Japanese, under 100 chars, wistful tone. Use \\n for line breaks",
+  "playerEmoji": "one emoji for the player character",
   "worlds": [
-    { "id": "nexus", "name": "拠点の名前", "mood": "dream", "theme": "情景を1行" },
-    { "id": "英小文字のID", "name": "世界の名前（10文字前後）", "mood": "night", "theme": "情景を1行" }
+    { "id": "nexus", "name": "hub name in Japanese", "mood": "dream", "theme": "one line of scenery, in Japanese" },
+    { "id": "lowercase_english_id", "name": "world name in Japanese (~10 chars)", "mood": "night", "theme": "one line of scenery, in Japanese" }
   ],
   "effects": [
-    { "id": "英小文字のID", "name": "アイテム名", "emoji": "絵文字1つ", "worldId": "置く世界のid" }
+    { "id": "lowercase_english_id", "name": "item name in Japanese", "emoji": "one emoji", "worldId": "id of the world it's placed in" }
   ],
-  "endingWorldId": "めざめの場所を置く世界のid"
+  "endingWorldId": "id of the world where the waking-up point goes"
 }
 
-mood は ${moodList} から選ぶ。`;
+"mood" must be one of: ${moodList}.`;
 }
 
 /** ステージ2: ワールドごとのマップとエンティティ */
@@ -51,65 +60,73 @@ export function rpgWorldPrompt(concept: RpgConcept, world: RpgWorldDef): string 
 	const isEnding = concept.endingWorldId === world.id;
 	const nexusId = concept.worlds[0].id;
 	const otherWorlds = concept.worlds.filter((w) => w.id !== world.id);
-	const worldList = otherWorlds.map((w) => `  '${w.id}' = ${w.name}（${w.theme}）`).join("\n");
+	const worldList = otherWorlds.map((w) => `  '${w.id}' = ${w.name} (${w.theme})`).join("\n");
 	const assignedEffects = concept.effects.filter((e) => e.worldId === world.id);
 	const knownEffects = concept.effects
-		.map((e) => `  '${e.id}' = ${e.emoji}${e.name}（${e.worldId} に落ちている）`)
+		.map((e) => `  '${e.id}' = ${e.emoji}${e.name} (found in ${e.worldId})`)
 		.join("\n");
 
 	const doorRule = isNexus
-		? `- ここは拠点（ネクサス）。他の全ワールドへの扉を必ず1つずつ置く:
+		? `- This is the hub. Place exactly one door to every other world:
 ${otherWorlds.map((w) => `    { "type": "door", "toWorld": "${w.id}", ... }`).join("\n")}
-- 'S'（プレイヤー開始位置）を必ず1つ置く。`
-		: `- 拠点へ戻る扉 { "type": "door", "toWorld": "${nexusId}", ... } を必ず1つ置く。
-- 他のワールドへの近道の扉を足してもよい（0〜1個。夢がループする感じになる）。toWorld に使えるID:
+- Place exactly one 'S' (player start position).`
+		: `- Place exactly one door back to the hub: { "type": "door", "toWorld": "${nexusId}", ... }.
+- You may add 0-1 shortcut doors to other worlds (makes the dream feel like it loops).
+  Valid IDs for toWorld:
 ${worldList}
-- 'S' は置かない（拠点専用）。`;
+- Do not place 'S' (that's the hub's only).`;
 
 	const goalRule = isEnding
-		? `- ここが最深部。'G'（めざめの場所）を最も奥まった場所にちょうど1つ置く。踏むと夢から覚めてエンディング。`
-		: `- 'G' は置かない（ワールド '${concept.endingWorldId}' 専用）。`;
+		? `- This is the deepest world. Place exactly one 'G' (waking-up point) in the most
+  remote spot. Stepping on it wakes the player up and ends the game.`
+		: `- Do not place 'G' (that tile belongs only to world '${concept.endingWorldId}').`;
 
 	const effectRule =
 		assignedEffects.length > 0
-			? `- このワールドには次の収集エフェクトを必ず配置する（見つけにくい場所に）:
-${assignedEffects.map((e) => `    { "type": "effect", "effectId": "${e.id}", "col": ..., "row": ..., "message": "拾ったときの短い文" }`).join("\n")}`
-			: `- このワールドに配置するエフェクトはない（type: "effect" は使わない）。`;
+			? `- This world must contain the following collectible effects (hide them somewhere
+  not too obvious):
+${assignedEffects.map((e) => `    { "type": "effect", "effectId": "${e.id}", "col": ..., "row": ..., "message": "short line shown when picked up, in Japanese" }`).join("\n")}`
+			: `- This world has no assigned effects (do not use type: "effect" here).`;
 
-	return `あなたは「ウォーキングシミュレーター」（ゆめにっき系）のマップデザイナーです。
-ゲーム「${concept.title}」の夢世界のひとつ「${world.name}」を設計してください。
-情景: ${world.theme}
-戦闘はありません。プレイヤーはただ歩き、風景を眺め、不思議な住人と言葉を交わします。
+	return `You are the map designer for a "walking simulator" dream game in the style of
+Yume Nikki. Design one dream world, "${world.name}", for the game "${concept.title}".
+Scenery: ${world.theme}
+There is no combat. The player just walks, looks at the scenery, and talks to strange
+inhabitants.
 
-## マップの書き方
-- 1文字が1マス。必ず ${RPG_ROWS} 行、各行 ${RPG_COLS} 文字ちょうどにする。
-- 使える文字（凡例）:
+## How to write the map
+- One character = one tile. The map must be exactly ${RPG_ROWS} rows, each row exactly
+  ${RPG_COLS} characters.
+- Available characters (legend):
 ${tileLegend}
-  'S' = プレイヤー開始位置（拠点のみ・歩けるマスに置く）
+  'S' = player start position (hub world only, on a walkable tile)
 
-## 設計ルール
-- 外周は 'M' か 'W' か '~' で囲む（マップの外に出られないように）。
-- 曲がりくねった道・行き止まり・小部屋・広場を混ぜて「歩きたくなる」地形にする。
-- 水辺('~')や森('F')で風景を作り、'B'（橋）・'D'（扉タイル）・'o'（花）・'d'（暗い床）でアクセントをつける。
-- 歩けるマスが100マス以上になるようにする。
+## Design rules
+- Surround the whole map with 'M', 'W', or '~' so the player can't walk off the edge.
+- Mix winding paths, dead ends, small rooms, and open plazas so it feels worth exploring.
+- Use water ('~') and forest ('F') for scenery, and 'B' (bridge) / 'D' (door tile) /
+  'o' (flowers) / 'd' (dark floor) as accents.
+- At least 100 tiles must be walkable.
 ${goalRule}
 
-## エンティティ
+## Entities
 ${doorRule}
 ${effectRule}
-- "npc": 不思議な住人。3〜6体。次の2種類を混ぜる:
-  1. つぶやきNPC … "message" に短く謎めいた一言。ふらふら歩き回る。
-  2. 会話イベントNPC（1〜3体） … "dialogue" を持ち、その場に立って会話する。
-- "warp": 踏むと同じワールド内の別地点へ飛ぶ渦。0〜2個。遠く離れた場所同士をつなぐと夢らしくなる。
+- "npc": 3 to 6 strange inhabitants, mixing two kinds:
+  1. Wandering NPC — "message" is a short, mysterious one-liner in Japanese. Wanders around.
+  2. Talking NPC (1-3 of these) — has "dialogue" and stands still, talking when approached.
+- "warp": a whirlpool that teleports the player elsewhere in the same world when stepped
+  on. 0 to 2 of these. Connecting far-apart spots makes it feel dreamlike.
 
-## dialogue（会話イベント）の書き方
-- lines: ふだんの会話（1〜4行。1行は60文字以内）
-- onceLines: はじめて会ったときだけの会話（任意）
-- choice: 選択肢を1回だけ出せる（任意）。prompt が問いで、options が2〜3個
-- ifEffect: プレイヤーが特定のエフェクトを持っているときの特別な反応（任意）
-既知のエフェクト:
-${knownEffects || "  （なし）"}
-例:
+## Writing "dialogue" (talking NPC conversation)
+- lines: the everyday conversation (1-4 lines, each under 60 Japanese characters)
+- onceLines: shown only the first time the player talks to this NPC (optional)
+- choice: a single round of options (optional). "prompt" is the question, "options" has
+  2-3 entries
+- ifEffect: a special reaction if the player is carrying a specific effect (optional)
+Known effects for this game:
+${knownEffects || "  (none)"}
+All dialogue text must be in Japanese. Example:
   { "type": "npc", "col": 5, "row": 8, "emoji": "👧",
     "dialogue": {
       "onceLines": ["……はじめて みる かお。", "ここは ながい ゆめの とちゅう。"],
@@ -119,19 +136,22 @@ ${knownEffects || "  （なし）"}
         { "label": "だまる", "lines": ["……そう。"] } ] }
     } }
 
-## 出力形式
-以下のJSONだけを出力してください。説明文やコードブロックは不要です。
-- asciiMap は「${RPG_ROWS}個の文字列」の配列。1つの文字列が1行で、文字列の中に改行を入れない。
-- entities の col は 0〜${RPG_COLS - 1}、row は 0〜${RPG_ROWS - 1} の範囲。
-- door の toCol/toRow は省略してよい（自動で相手側の扉のそばに出る）。
-- entities は多くても15個程度にとどめる。同じセリフやほぼ同じ内容のNPCを繰り返し出力しないこと。
-- JSONを1つ出力したら、そこで終わりにする。それ以降に別のJSONや説明・繰り返しを続けないこと。
+## Output format
+Output ONLY the JSON below. No explanation, no code fences.
+- "asciiMap" is an array of exactly ${RPG_ROWS} strings, one per row, no embedded newlines.
+- entities: col is 0-${RPG_COLS - 1}, row is 0-${RPG_ROWS - 1}.
+- A door's toCol/toRow may be omitted (it will automatically land the player next to the
+  matching door on the other side).
+- Use at most ~15 entities total. Never output two NPCs with the same or near-identical
+  dialogue/message — every NPC's text must be distinct.
+- Stop as soon as you have written one JSON object. Do not continue with more JSON,
+  explanation, or repeated content after it.
 
 {
-  "asciiMap": ["1行目の文字列", "2行目の文字列", ... 全${RPG_ROWS}行],
+  "asciiMap": ["row 1 string", "row 2 string", ... all ${RPG_ROWS} rows],
   "entities": [
-    { "type": "door", "col": 14, "row": 2, "emoji": "🚪", "toWorld": "ワールドid" },
-    { "type": "npc", "col": 5, "row": 8, "emoji": "👻", "message": "セリフ" },
+    { "type": "door", "col": 14, "row": 2, "emoji": "🚪", "toWorld": "world id" },
+    { "type": "npc", "col": 5, "row": 8, "emoji": "👻", "message": "line in Japanese" },
     { "type": "warp", "col": 12, "row": 20, "toCol": 25, "toRow": 3 }
   ]
 }`;

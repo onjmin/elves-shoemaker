@@ -77,7 +77,8 @@ ${entityLegend}
 /** 検証エラーを渡して修正させる。
  *  ローカルLLMには会話履歴が無い（毎回1プロンプト完結）ため、
  *  元の課題（凡例・ルール一式）を必ず再掲する。エラーと前回出力だけを渡すと
- *  モデルがルールを忘れて回を追うごとに劣化する。 */
+ *  モデルがルールを忘れて回を追うごとに劣化する。
+ *  指示文は英語にしている（ローカルLLMは英語の指示追従の方が総じて安定するため）。 */
 export function repairPrompt(
 	originalPrompt: string,
 	previousJson: string,
@@ -86,14 +87,14 @@ export function repairPrompt(
 	return `${originalPrompt}
 
 ──────────────────────────────
-【重要】あなたの前回の出力には以下の問題がありました。
+IMPORTANT: your previous output had the following problems.
 
-## 前回の出力
+## Your previous output
 ${previousJson}
 
-## 検出された問題
+## Problems detected
 ${errors.map((e) => `- ${e}`).join("\n")}
 
-上記の課題のルールに従い、問題をすべて修正した完全なJSONを出力し直してください。
-説明文やコードブロックは不要です。JSONだけを出力してください。`;
+Following the rules above, output a complete, corrected JSON that fixes every problem.
+Output JSON only — no explanation, no code fences, no text before or after it.`;
 }

@@ -55,7 +55,9 @@ export const llm = {
 		return res.content.trim();
 	},
 
-	async completeAsJson(prompt: string): Promise<{ data: object | null; error: string | null; rawContent: string }> {
+	async completeAsJson(
+		prompt: string,
+	): Promise<{ data: object | null; error: string | null; rawContent: string }> {
 		const res = await this.ask(prompt);
 		const { data, error } = repairAndParseJSON(res.content);
 		return { data, error, rawContent: res.content };
